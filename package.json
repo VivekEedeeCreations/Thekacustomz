@@ -1,0 +1,43 @@
+{
+  "name": "inventory-system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-ready Inventory Management System (monorepo)",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:api dev:web",
+    "dev:web": "npm run dev -w @inventory/web",
+    "dev:api": "npm run dev -w @inventory/api",
+    "build": "npm run build -w @inventory/shared && npm run build -w @inventory/api && npm run build -w @inventory/web",
+    "build:shared": "npm run build -w @inventory/shared",
+    "build:api": "npm run build -w @inventory/api",
+    "build:web": "npm run build -w @inventory/web",
+    "typecheck": "npm run build:shared && npm run typecheck -w @inventory/shared && npm run typecheck -w @inventory/api && npm run typecheck -w @inventory/web",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "clean": "rimraf \"apps/*/dist\" \"packages/*/dist\" \"apps/*/tsconfig.tsbuildinfo\" \"packages/*/tsconfig.tsbuildinfo\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "globals": "^15.14.0",
+    "npm-run-all2": "^7.0.2",
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.19.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

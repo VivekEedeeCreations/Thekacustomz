@@ -1,0 +1,5 @@
+-- Supabase seed file.
+--
+-- Intentionally empty: no mock business data is created for this project.
+-- The first user to sign up is automatically granted the OWNER role
+-- (see internal.handle_new_user in 20260907120100_auth_profiles_and_roles.sql).

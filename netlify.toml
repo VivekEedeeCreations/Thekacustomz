@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build:shared && npm run build:web"
+  publish = "apps/web/dist"
+
+# Single-page app: serve index.html for every path so deep links
+# (e.g. /orders/123) and page refreshes work.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
