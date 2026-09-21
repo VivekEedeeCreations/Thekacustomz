@@ -8,6 +8,8 @@ import {
   PackageMinus,
   ScanLine,
   Trash2,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { MOVEMENT_TYPE_LABELS, MOVEMENT_TYPE_SIGN, type MovementType } from '@inventory/shared';
@@ -17,6 +19,7 @@ import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -24,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import {
   Table,
   TableBody,
@@ -38,10 +42,17 @@ import { useCreateMovement } from '@/features/inventory/mutations';
 import { useLocations } from '@/features/locations/queries';
 import { useVendors } from '@/features/vendors/queries';
 import { useCameraScanner } from '@/hooks/use-camera-scanner';
+import { beep, type BeepKind } from '@/lib/beep';
 import { formatQuantity } from '@/lib/format';
 import { isVendorRelevant, isVendorRequired } from '@/lib/movement-vendor';
 
 const NONE = '__none__';
+
+/**
+ * A code the camera reads again inside this window is treated as the same scan (it is still in
+ * frame) and ignored silently — no second count, no warning.
+ */
+const REPEAT_WINDOW_MS = 2500;
 
 type ScanMode = 'DISPATCH' | 'RESTOCK';
 
@@ -76,7 +87,23 @@ export function ScanPage() {
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
   const [lines, setLines] = useState<ScanLine[]>([]);
+  const [sound, setSound] = useState(true);
+  const [countRepeats, setCountRepeats] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Refs, not state: the camera can fire faster than React re-renders, so the "already scanned?"
+  // check has to see a claim made a few milliseconds ago. code -> line key ('' while resolving).
+  const scannedCodes = useRef(new Map<string, string>());
+  const lastAttempt = useRef(new Map<string, number>());
+
+  const cue = (kind: BeepKind) => {
+    if (sound) beep(kind);
+  };
+
+  const forgetLines = (shouldForget: (key: string) => boolean) => {
+    for (const [code, key] of scannedCodes.current) {
+      if (key !== '' && shouldForget(key)) scannedCodes.current.delete(code);
+    }
+  };
 
   useEffect(() => {
     const defaultLocation = locations?.find((l) => l.is_default)?.id;
@@ -98,27 +125,60 @@ export function ScanPage() {
   const vendorRequired = isVendorRequired(movementType);
   const sign = MOVEMENT_TYPE_SIGN[movementType] ?? 1;
 
-  async function handleScan(rawCode: string) {
+  async function handleScan(rawCode: string, fromCamera = false) {
     const code = rawCode.trim();
-    if (!code || !locationId) {
-      if (!locationId) toast.error('Select a location first');
+    if (!code) return;
+    if (!locationId) {
+      cue('error');
+      toast.error('Select a location first');
       return;
     }
+
+    // The camera re-reads a code for as long as it stays in frame; a typed or hardware-scanned
+    // code is always a deliberate scan and gets feedback below.
+    if (fromCamera) {
+      const now = Date.now();
+      const last = lastAttempt.current.get(code);
+      lastAttempt.current.set(code, now);
+      if (last !== undefined && now - last < REPEAT_WINDOW_MS) return;
+    }
+
+    if (!countRepeats && scannedCodes.current.has(code)) {
+      cue('warn');
+      toast.warning('Already scanned', {
+        description: 'Change the quantity in the list if you have more than one.',
+      });
+      return;
+    }
+    scannedCodes.current.set(code, '');
 
     setIsLookingUp(true);
     try {
       const resolved = await lookupBarcode(code);
       if (!resolved) {
+        scannedCodes.current.delete(code);
+        cue('error');
         toast.error('No item matches this barcode', { description: code });
         return;
       }
 
       const key = resolved.variant?.id ?? resolved.product.id;
+      scannedCodes.current.set(code, key);
+
       const existing = lines.find((l) => l.key === key);
       if (existing) {
+        if (!countRepeats) {
+          // A different barcode for an item that is already on the list.
+          cue('warn');
+          toast.warning(`${resolved.product.name} is already on the list`, {
+            description: 'Change the quantity in the list if you have more than one.',
+          });
+          return;
+        }
         setLines((prev) =>
           prev.map((l) => (l.key === key ? { ...l, quantity: l.quantity + 1 } : l)),
         );
+        cue('ok');
         toast.success(`+1 ${resolved.product.name}`);
         return;
       }
@@ -134,22 +194,23 @@ export function ScanPage() {
             .join(' / ') || resolved.variant.sku
         : null;
 
-      setLines((prev) => [
-        ...prev,
-        {
-          key,
-          productId: resolved.product.id,
-          variantId: resolved.variant?.id ?? null,
-          productName: resolved.product.name,
-          variantLabel,
-          sku: resolved.variant?.sku ?? resolved.product.sku,
-          barcode: resolved.barcode.barcode,
-          quantity: 1,
-          onHand,
-        },
-      ]);
+      const line: ScanLine = {
+        key,
+        productId: resolved.product.id,
+        variantId: resolved.variant?.id ?? null,
+        productName: resolved.product.name,
+        variantLabel,
+        sku: resolved.variant?.sku ?? resolved.product.sku,
+        barcode: resolved.barcode.barcode,
+        quantity: 1,
+        onHand,
+      };
+      setLines((prev) => (prev.some((l) => l.key === key) ? prev : [...prev, line]));
+      cue('ok');
       toast.success(`Added ${resolved.product.name}`);
     } catch (error) {
+      if (scannedCodes.current.get(code) === '') scannedCodes.current.delete(code);
+      cue('error');
       toast.error('Scan lookup failed', { description: (error as Error).message });
     } finally {
       setIsLookingUp(false);
@@ -157,7 +218,7 @@ export function ScanPage() {
   }
 
   const { videoRef, error: cameraError } = useCameraScanner(cameraOn, (text) => {
-    void handleScan(text);
+    void handleScan(text, true);
   });
 
   const onManualSubmit = (e: FormEvent) => {
@@ -173,7 +234,10 @@ export function ScanPage() {
     );
   };
 
-  const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l.key !== key));
+  const removeLine = (key: string) => {
+    forgetLines((k) => k === key);
+    setLines((prev) => prev.filter((l) => l.key !== key));
+  };
 
   const canPost =
     lines.length > 0 &&
@@ -209,8 +273,10 @@ export function ScanPage() {
 
     if (failedKeys.size === 0) {
       toast.success(`Posted ${posted} movement${posted === 1 ? '' : 's'}`);
+      scannedCodes.current.clear();
       setLines([]);
     } else {
+      forgetLines((k) => !failedKeys.has(k));
       setLines((prev) => prev.filter((l) => failedKeys.has(l.key)));
       toast.error(`Posted ${posted}, ${failedKeys.size} failed`, {
         description: failureMessages.join('\n'),
@@ -308,15 +374,26 @@ export function ScanPage() {
           <div className="rounded-lg border p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-medium">Scanner</h3>
-              <Button
-                type="button"
-                variant={cameraOn ? 'secondary' : 'outline'}
-                size="sm"
-                onClick={() => setCameraOn((v) => !v)}
-              >
-                {cameraOn ? <CameraOff className="h-4 w-4" /> : <Camera className="h-4 w-4" />}
-                {cameraOn ? 'Stop camera' : 'Use camera'}
-              </Button>
+              <div className="flex gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={sound ? 'Mute scan sounds' : 'Unmute scan sounds'}
+                  onClick={() => setSound((v) => !v)}
+                >
+                  {sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant={cameraOn ? 'secondary' : 'outline'}
+                  size="sm"
+                  onClick={() => setCameraOn((v) => !v)}
+                >
+                  {cameraOn ? <CameraOff className="h-4 w-4" /> : <Camera className="h-4 w-4" />}
+                  {cameraOn ? 'Stop camera' : 'Use camera'}
+                </Button>
+              </div>
             </div>
 
             <form onSubmit={onManualSubmit} className="flex gap-2">
@@ -340,6 +417,12 @@ export function ScanPage() {
               Works with a USB/Bluetooth barcode scanner (it types the code + Enter) or manual
               entry.
             </p>
+            <div className="mt-3 flex items-center gap-2">
+              <Switch id="count-repeats" checked={countRepeats} onCheckedChange={setCountRepeats} />
+              <Label htmlFor="count-repeats" className="text-xs font-normal text-muted-foreground">
+                Count every scan (off: a barcode already on the list is flagged, not counted twice)
+              </Label>
+            </div>
 
             {cameraOn ? (
               <div className="mt-3 overflow-hidden rounded-md border bg-black">

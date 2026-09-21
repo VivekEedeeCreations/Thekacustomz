@@ -145,6 +145,7 @@ export interface Database {
           design: string | null;
           cost_price: number | null;
           selling_price: number | null;
+          hsn_sac_code: string | null;
           attributes: Json;
           is_active: boolean;
           created_at: string;
@@ -160,6 +161,7 @@ export interface Database {
           design?: string | null;
           cost_price?: number | null;
           selling_price?: number | null;
+          hsn_sac_code?: string | null;
           attributes?: Json;
           is_active?: boolean;
         };

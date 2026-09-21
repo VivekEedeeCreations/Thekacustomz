@@ -109,6 +109,17 @@ function barcodeKey(owner: BarcodeOwner) {
   return owner.variantId ?? owner.productId;
 }
 
+/**
+ * Postgres unique_violation (`23505`) on the barcode value itself. Other unique indexes on the
+ * table (e.g. one primary per owner) share the code, so match the constraint by name.
+ */
+function isDuplicateBarcode(error: { code?: string; message?: string }): boolean {
+  return error.code === '23505' && (error.message ?? '').includes('barcodes_barcode_key');
+}
+
+const MAX_GENERATE_ATTEMPTS = 5;
+const BULK_CHUNK_SIZE = 100;
+
 export function useCreateBarcode(owner: BarcodeOwner) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -122,7 +133,14 @@ export function useCreateBarcode(owner: BarcodeOwner) {
         })
         .select()
         .single();
-      if (error) throw error;
+      if (error) {
+        if (isDuplicateBarcode(error)) {
+          throw new Error(
+            `The barcode "${input.barcode}" is already assigned to another product or variant. Every barcode must be unique.`,
+          );
+        }
+        throw error;
+      }
       return data;
     },
     onSuccess: () =>
@@ -130,30 +148,100 @@ export function useCreateBarcode(owner: BarcodeOwner) {
   });
 }
 
-/** Calls the public.generate_ean13() DB function, then inserts the result as a barcode row. */
+/**
+ * Calls the public.generate_ean13() DB function, then inserts the result as a barcode row.
+ * The sequence never repeats a code, but a hand-typed barcode could already occupy the next
+ * one, so a collision just draws a fresh number instead of failing.
+ */
+async function insertGeneratedEan13(owner: BarcodeOwner, isPrimary: boolean) {
+  for (let attempt = 1; attempt <= MAX_GENERATE_ATTEMPTS; attempt += 1) {
+    const { data: code, error: rpcError } = await supabase.rpc('generate_ean13');
+    if (rpcError) throw rpcError;
+
+    const { data, error } = await supabase
+      .from('barcodes')
+      .insert({
+        barcode: code,
+        symbology: 'EAN13',
+        product_id: owner.productId ?? null,
+        variant_id: owner.variantId ?? null,
+        is_primary: isPrimary,
+      })
+      .select()
+      .single();
+    if (!error) return data;
+    if (!isDuplicateBarcode(error)) throw error;
+  }
+  throw new Error('Could not find an unused barcode number. Please try again.');
+}
+
 export function useGenerateEan13Barcode(owner: BarcodeOwner) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { isPrimary?: boolean } = {}) => {
-      const { data: code, error: rpcError } = await supabase.rpc('generate_ean13');
-      if (rpcError) throw rpcError;
-
-      const { data, error } = await supabase
-        .from('barcodes')
-        .insert({
-          barcode: code,
-          symbology: 'EAN13',
-          product_id: owner.productId ?? null,
-          variant_id: owner.variantId ?? null,
-          is_primary: input.isPrimary ?? false,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    },
+    mutationFn: (input: { isPrimary?: boolean } = {}) =>
+      insertGeneratedEan13(owner, input.isPrimary ?? false),
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: ['barcodes', barcodeKey(owner)] }),
+  });
+}
+
+export interface BulkBarcodeResult {
+  generated: number;
+  failed: { variantId: string; message: string }[];
+}
+
+/**
+ * Generates one EAN-13 (set as primary) for each given variant. Callers pass only variants that
+ * have no barcode yet; one failure doesn't stop the rest.
+ */
+export function useBulkGenerateVariantBarcodes() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (variantIds: string[]): Promise<BulkBarcodeResult> => {
+      const result: BulkBarcodeResult = { generated: 0, failed: [] };
+      for (const variantId of variantIds) {
+        try {
+          await insertGeneratedEan13({ variantId }, true);
+          result.generated += 1;
+        } catch (error) {
+          result.failed.push({ variantId, message: (error as Error).message });
+        }
+      }
+      return result;
+    },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['barcodes'] }),
+  });
+}
+
+/**
+ * Fields a bulk edit may change. `undefined` = leave alone, `null` = clear so the variant
+ * falls back to the parent product's value, anything else = set.
+ */
+export interface BulkVariantPatch {
+  cost_price?: number | null;
+  selling_price?: number | null;
+  hsn_sac_code?: string | null;
+}
+
+export function useBulkUpdateVariants() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ ids, patch }: { ids: string[]; patch: BulkVariantPatch }) => {
+      let updated = 0;
+      // Ids travel in the URL, so keep each request comfortably under proxy length limits.
+      for (let i = 0; i < ids.length; i += BULK_CHUNK_SIZE) {
+        const { data, error } = await supabase
+          .from('product_variants')
+          .update(patch)
+          .in('id', ids.slice(i, i + BULK_CHUNK_SIZE))
+          .select('id');
+        if (error) throw error;
+        updated += data.length;
+      }
+      // RLS hides rows the caller can't update instead of raising, so compare counts.
+      return { updated, requested: ids.length };
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['product-variants'] }),
   });
 }
 

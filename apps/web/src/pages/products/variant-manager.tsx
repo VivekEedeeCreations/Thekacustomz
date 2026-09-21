@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/empty-state';
 import { RoleGate } from '@/components/auth/role-gate';
 import { ActiveBadge } from '@/components/active-badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -42,10 +43,12 @@ import {
   useDeleteVariant,
   useUpdateVariant,
 } from '@/features/products/mutations';
-import { useProductVariants, type ProductVariant } from '@/features/products/queries';
+import { useProduct, useProductVariants, type ProductVariant } from '@/features/products/queries';
 import { formatCurrency } from '@/lib/format';
 
 import { BarcodeManager } from './barcode-manager';
+import { InheritedValue } from './inherited-value';
+import { VariantBulkBar } from './variant-bulk-bar';
 
 const schema = z.object({
   sku: z.string().min(1, 'Required').max(64),
@@ -55,6 +58,11 @@ const schema = z.object({
   design: z.string().max(60).optional().or(z.literal('')),
   cost_price: z.coerce.number().min(0).optional(),
   selling_price: z.coerce.number().min(0).optional(),
+  hsn_sac_code: z
+    .string()
+    .regex(/^[0-9]{4,8}$/, 'HSN/SAC must be 4 to 8 digits')
+    .optional()
+    .or(z.literal('')),
   is_active: z.boolean(),
 });
 type FormValues = z.infer<typeof schema>;
@@ -82,6 +90,7 @@ function VariantFormDialog({
       design: variant?.design ?? '',
       cost_price: variant?.cost_price ?? undefined,
       selling_price: variant?.selling_price ?? undefined,
+      hsn_sac_code: variant?.hsn_sac_code ?? '',
       is_active: variant?.is_active ?? true,
     },
   });
@@ -95,6 +104,7 @@ function VariantFormDialog({
       design: values.design || null,
       cost_price: values.cost_price ?? null,
       selling_price: values.selling_price ?? null,
+      hsn_sac_code: values.hsn_sac_code || null,
       is_active: values.is_active,
     };
     try {
@@ -104,7 +114,15 @@ function VariantFormDialog({
       } else {
         await createVariant.mutateAsync({ ...payload, product_id: productId });
         toast.success('Variant created');
-        form.reset({ sku: '', name: '', size: '', color: '', design: '', is_active: true });
+        form.reset({
+          sku: '',
+          name: '',
+          size: '',
+          color: '',
+          design: '',
+          hsn_sac_code: '',
+          is_active: true,
+        });
       }
       setOpen(false);
     } catch (error) {
@@ -229,6 +247,24 @@ function VariantFormDialog({
             </div>
             <FormField
               control={form.control}
+              name="hsn_sac_code"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>HSN/SAC code (optional)</FormLabel>
+                  <FormControl>
+                    <Input
+                      inputMode="numeric"
+                      maxLength={8}
+                      placeholder="Uses product's"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name="is_active"
               render={({ field }) => (
                 <FormItem className="flex items-center justify-between rounded-lg border p-3">
@@ -274,12 +310,35 @@ function VariantBarcodesDialog({ variant }: { variant: ProductVariant }) {
 export function VariantManager({ productId }: { productId: string }) {
   const { data: variants, isLoading } = useProductVariants(productId);
   const deleteVariant = useDeleteVariant(productId);
+  const { data: product } = useProduct(productId);
   const [pendingDelete, setPendingDelete] = useState<ProductVariant | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   if (isLoading) return <Skeleton className="h-32 w-full" />;
 
+  const variantIds = (variants ?? []).map((v) => v.id);
+  const selectedIds = variantIds.filter((id) => selected.has(id));
+  const allState =
+    selectedIds.length === 0
+      ? false
+      : selectedIds.length === variantIds.length
+        ? true
+        : ('indeterminate' as const);
+
+  const setSelection = (ids: string[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+
   return (
     <div className="space-y-3">
+      <VariantBulkBar selectedIds={selectedIds} onClear={() => setSelected(new Set())} />
+
       <div className="flex justify-end">
         <RoleGate min="STAFF">
           <VariantFormDialog
@@ -304,10 +363,20 @@ export function VariantManager({ productId }: { productId: string }) {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <RoleGate min="STAFF">
+                    <Checkbox
+                      aria-label="Select all variants"
+                      checked={allState}
+                      onCheckedChange={(checked) => setSelection(variantIds, checked === true)}
+                    />
+                  </RoleGate>
+                </TableHead>
                 <TableHead>SKU</TableHead>
                 <TableHead>Size</TableHead>
                 <TableHead>Color</TableHead>
                 <TableHead>Design</TableHead>
+                <TableHead>HSN/SAC</TableHead>
                 <TableHead>Cost</TableHead>
                 <TableHead>Price</TableHead>
                 <TableHead>Status</TableHead>
@@ -316,16 +385,42 @@ export function VariantManager({ productId }: { productId: string }) {
             </TableHeader>
             <TableBody>
               {variants.map((variant) => (
-                <TableRow key={variant.id}>
+                <TableRow
+                  key={variant.id}
+                  data-state={selected.has(variant.id) ? 'selected' : undefined}
+                >
+                  <TableCell>
+                    <RoleGate min="STAFF">
+                      <Checkbox
+                        aria-label={`Select variant ${variant.sku}`}
+                        checked={selected.has(variant.id)}
+                        onCheckedChange={(checked) => setSelection([variant.id], checked === true)}
+                      />
+                    </RoleGate>
+                  </TableCell>
                   <TableCell className="font-medium">{variant.sku}</TableCell>
                   <TableCell>{variant.size || '—'}</TableCell>
                   <TableCell>{variant.color || '—'}</TableCell>
                   <TableCell>{variant.design || '—'}</TableCell>
                   <TableCell>
-                    {variant.cost_price != null ? formatCurrency(variant.cost_price) : '—'}
+                    <InheritedValue
+                      own={variant.hsn_sac_code}
+                      inherited={product?.hsn_sac_code ?? null}
+                    />
                   </TableCell>
                   <TableCell>
-                    {variant.selling_price != null ? formatCurrency(variant.selling_price) : '—'}
+                    <InheritedValue
+                      own={variant.cost_price != null ? formatCurrency(variant.cost_price) : null}
+                      inherited={product ? formatCurrency(product.cost_price) : null}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <InheritedValue
+                      own={
+                        variant.selling_price != null ? formatCurrency(variant.selling_price) : null
+                      }
+                      inherited={product ? formatCurrency(product.selling_price) : null}
+                    />
                   </TableCell>
                   <TableCell>
                     <ActiveBadge active={variant.is_active} />

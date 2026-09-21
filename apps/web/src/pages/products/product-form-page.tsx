@@ -140,11 +140,11 @@ export function ProductFormPage() {
   return (
     <div>
       <PageHeader
-        title={isEditing ? (product?.name ?? 'Product') : 'New product'}
+        title={isEditing ? (product?.name ?? 'Product') : 'New parent product'}
         description={
           isEditing
             ? `SKU ${product?.sku}`
-            : 'Create the base product, then add variants and barcodes.'
+            : 'Start with the parent product. Sizes, colors and designs are added as variants once it is saved.'
         }
       />
 
@@ -352,13 +352,24 @@ export function ProductFormPage() {
               {canEdit ? (
                 <Button type="submit" disabled={isSubmitting}>
                   {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {isEditing ? 'Save changes' : 'Create product'}
+                  {isEditing ? 'Save changes' : 'Create parent product'}
                 </Button>
               ) : null}
             </form>
           </fieldset>
         </Form>
       </div>
+
+      {!isEditing ? (
+        <div className="mt-6 max-w-2xl rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground">Variants, barcodes and images</p>
+          <p className="mt-1">
+            Save the parent product first. You will land on its page, where you can add variants
+            (each with its own SKU, price and HSN), generate barcodes for one or many variants at
+            once, and upload images.
+          </p>
+        </div>
+      ) : null}
 
       {isEditing && product ? (
         <div className="mt-8">
