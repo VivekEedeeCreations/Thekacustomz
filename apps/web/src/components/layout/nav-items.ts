@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  Calculator,
   LayoutDashboard,
   MapPin,
   Package,
@@ -24,6 +25,12 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Dashboard', to: '/', icon: LayoutDashboard, minRole: 'VIEWER' },
   { title: 'Products', to: '/products', icon: Package, minRole: 'VIEWER' },
   { title: 'Categories', to: '/categories', icon: Tags, minRole: 'VIEWER' },
+  {
+    title: 'Price calculator',
+    to: '/pricing-calculator',
+    icon: Calculator,
+    minRole: 'VIEWER',
+  },
   { title: 'Inventory', to: '/inventory', icon: Warehouse, minRole: 'VIEWER' },
   { title: 'Orders', to: '/orders', icon: ShoppingCart, minRole: 'VIEWER' },
   { title: 'Scan', to: '/scan', icon: ScanLine, minRole: 'STAFF' },

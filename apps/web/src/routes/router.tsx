@@ -12,6 +12,7 @@ import { NotFoundPage } from '@/pages/not-found-page';
 import { OrderDetailPage } from '@/pages/orders/order-detail-page';
 import { OrderFormPage } from '@/pages/orders/order-form-page';
 import { OrdersPage } from '@/pages/orders/orders-page';
+import { PricingCalculatorPage } from '@/pages/pricing-calculator/pricing-calculator-page';
 import { ProductFormPage } from '@/pages/products/product-form-page';
 import { ProductsListPage } from '@/pages/products/products-list-page';
 import { ScanPage } from '@/pages/scan/scan-page';
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
           { path: 'products/new', element: <ProductFormPage /> },
           { path: 'products/:productId', element: <ProductFormPage /> },
           { path: 'categories', element: <CategoriesPage /> },
+          { path: 'pricing-calculator', element: <PricingCalculatorPage /> },
           { path: 'inventory', element: <InventoryPage /> },
           { path: 'orders', element: <OrdersPage /> },
           {
