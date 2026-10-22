@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { TablesInsert, TablesUpdate } from '@inventory/shared';
 
 import { buildProductImagePath, PRODUCT_IMAGES_BUCKET } from '@/lib/storage';
@@ -276,6 +276,11 @@ function imageKey(owner: BarcodeOwner) {
   return owner.variantId ?? owner.productId;
 }
 
+function invalidateImages(queryClient: QueryClient, owner: BarcodeOwner) {
+  void queryClient.invalidateQueries({ queryKey: ['product-images', imageKey(owner)] });
+  void queryClient.invalidateQueries({ queryKey: ['product-images', 'all'] });
+}
+
 export function useUploadProductImage(owner: BarcodeOwner) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -308,8 +313,7 @@ export function useUploadProductImage(owner: BarcodeOwner) {
       }
       return data;
     },
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['product-images', imageKey(owner)] }),
+    onSuccess: () => invalidateImages(queryClient, owner),
   });
 }
 
@@ -323,8 +327,7 @@ export function useSetPrimaryImage(owner: BarcodeOwner) {
         .eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['product-images', imageKey(owner)] }),
+    onSuccess: () => invalidateImages(queryClient, owner),
   });
 }
 
@@ -336,8 +339,7 @@ export function useDeleteProductImage(owner: BarcodeOwner) {
       if (error) throw error;
       await supabase.storage.from(PRODUCT_IMAGES_BUCKET).remove([image.storage_path]);
     },
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['product-images', imageKey(owner)] }),
+    onSuccess: () => invalidateImages(queryClient, owner),
   });
 }
 
@@ -365,7 +367,6 @@ export function useReorderProductImages(owner: BarcodeOwner) {
         if (error) throw error;
       }
     },
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['product-images', imageKey(owner)] }),
+    onSuccess: () => invalidateImages(queryClient, owner),
   });
 }

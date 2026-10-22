@@ -104,6 +104,23 @@ export function useBarcodes(owner: BarcodeOwner | undefined) {
   });
 }
 
+/** Product-level images (not variant images) — used for list thumbnails. */
+export function useAllProductImages() {
+  return useQuery({
+    queryKey: ['product-images', 'all'],
+    queryFn: async (): Promise<ProductImage[]> => {
+      const { data, error } = await supabase
+        .from('product_images')
+        .select('*')
+        .is('variant_id', null)
+        .order('position');
+      if (error) throw error;
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useProductImages(owner: BarcodeOwner | undefined) {
   const key = owner ? (owner.variantId ?? owner.productId) : undefined;
   return useQuery({

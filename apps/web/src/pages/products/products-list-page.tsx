@@ -32,12 +32,15 @@ import {
 import { useCategories } from '@/features/categories/queries';
 import { useDeleteProduct } from '@/features/products/mutations';
 import {
+  useAllProductImages,
   useAllVariants,
   useProducts,
   type Product,
+  type ProductImage,
   type ProductVariant,
 } from '@/features/products/queries';
 import { formatCurrency } from '@/lib/format';
+import { productImagePublicUrl } from '@/lib/storage';
 import { cn } from '@/lib/utils';
 
 import { InheritedValue } from './inherited-value';
@@ -56,6 +59,7 @@ export function ProductsListPage() {
   const { data: products, isLoading } = useProducts();
   const { data: allVariants } = useAllVariants();
   const { data: categories } = useCategories();
+  const { data: productImages } = useAllProductImages();
   const deleteProduct = useDeleteProduct();
 
   const [search, setSearch] = useState('');
@@ -79,6 +83,17 @@ export function ProductsListPage() {
     for (const list of map.values()) list.sort((a, b) => a.sku.localeCompare(b.sku));
     return map;
   }, [allVariants]);
+
+  // Thumbnail per product: its primary image, else the first by position (query is position-ordered).
+  const thumbnailByProduct = useMemo(() => {
+    const map = new Map<string, ProductImage>();
+    for (const image of productImages ?? []) {
+      if (!image.product_id) continue;
+      const current = map.get(image.product_id);
+      if (!current || (image.is_primary && !current.is_primary)) map.set(image.product_id, image);
+    }
+    return map;
+  }, [productImages]);
 
   /**
    * Products to show, each with the variants to list under it. A search that only hits a
@@ -186,7 +201,7 @@ export function ProductsListPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-24" />
+                <TableHead className="w-36" />
                 <TableHead>SKU</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Category</TableHead>
@@ -202,6 +217,7 @@ export function ProductsListPage() {
             <TableBody>
               {rows.map(({ product, variants, autoOpen }) => {
                 const isOpen = variants.length > 0 && (autoOpen || expanded.has(product.id));
+                const thumbnail = thumbnailByProduct.get(product.id);
                 const variantIds = variants.map((v) => v.id);
                 const selectedCount = variantIds.filter((id) => selected.has(id)).length;
                 const groupState =
@@ -248,6 +264,18 @@ export function ProductsListPage() {
                               />
                             </RoleGate>
                           ) : null}
+                          <div className="ml-auto flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
+                            {thumbnail ? (
+                              <img
+                                src={productImagePublicUrl(thumbnail.storage_path)}
+                                alt={thumbnail.alt_text ?? product.name}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <Package className="h-4 w-4 text-muted-foreground" />
+                            )}
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell className="font-mono text-xs">{product.sku}</TableCell>
@@ -290,7 +318,7 @@ export function ProductsListPage() {
                           <Table className="text-xs">
                             <TableHeader>
                               <TableRow className="hover:bg-transparent">
-                                <TableHead className="w-24" />
+                                <TableHead className="w-36" />
                                 <TableHead>Variant SKU</TableHead>
                                 <TableHead>Size</TableHead>
                                 <TableHead>Color</TableHead>
