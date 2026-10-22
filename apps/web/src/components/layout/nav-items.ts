@@ -9,6 +9,7 @@ import {
   Tag,
   Tags,
   Truck,
+  Wallet,
   UsersRound,
   Warehouse,
 } from 'lucide-react';
@@ -31,6 +32,8 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Calculator,
     minRole: 'VIEWER',
   },
+  { title: 'FBA targets', to: '/fba-targets', icon: Truck, minRole: 'VIEWER' },
+  { title: 'Petty book', to: '/petty-book', icon: Wallet, minRole: 'STAFF' },
   { title: 'Inventory', to: '/inventory', icon: Warehouse, minRole: 'VIEWER' },
   { title: 'Orders', to: '/orders', icon: ShoppingCart, minRole: 'VIEWER' },
   { title: 'Scan', to: '/scan', icon: ScanLine, minRole: 'STAFF' },

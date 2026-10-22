@@ -54,12 +54,20 @@ import {
 import { useCategories, type Category } from '@/features/categories/queries';
 
 const NONE = '__none__';
+/** Standard GST slabs offered for a category default. */
+const GST_RATES = ['0', '5', '12', '18', '28'];
 
 const schema = z.object({
   name: z.string().min(1, 'Required').max(120),
   parent_id: z.string(),
   slug: z.string().max(120).optional().or(z.literal('')),
   description: z.string().max(2000).optional().or(z.literal('')),
+  hsn_sac_code: z
+    .string()
+    .regex(/^(\d{4,8})?$/, 'HSN/SAC is 4–8 digits')
+    .optional()
+    .or(z.literal('')),
+  tax_rate: z.string(),
   is_active: z.boolean(),
 });
 type FormValues = z.infer<typeof schema>;
@@ -84,6 +92,8 @@ function CategoryFormDialog({
       parent_id: category?.parent_id ?? NONE,
       slug: category?.slug ?? '',
       description: category?.description ?? '',
+      hsn_sac_code: category?.hsn_sac_code ?? '',
+      tax_rate: category?.tax_rate != null ? String(Number(category.tax_rate)) : NONE,
       is_active: category?.is_active ?? true,
     },
   });
@@ -94,6 +104,8 @@ function CategoryFormDialog({
       parent_id: values.parent_id === NONE ? null : values.parent_id,
       slug: values.slug || null,
       description: values.description || null,
+      hsn_sac_code: values.hsn_sac_code || null,
+      tax_rate: values.tax_rate === NONE ? null : Number(values.tax_rate),
       is_active: values.is_active,
     };
     try {
@@ -103,7 +115,15 @@ function CategoryFormDialog({
       } else {
         await createCategory.mutateAsync(payload);
         toast.success('Category created');
-        form.reset({ name: '', parent_id: NONE, slug: '', description: '', is_active: true });
+        form.reset({
+          name: '',
+          parent_id: NONE,
+          slug: '',
+          description: '',
+          hsn_sac_code: '',
+          tax_rate: NONE,
+          is_active: true,
+        });
       }
       setOpen(false);
     } catch (error) {
@@ -174,6 +194,51 @@ function CategoryFormDialog({
                 </FormItem>
               )}
             />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="hsn_sac_code"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>HSN/SAC code</FormLabel>
+                    <FormControl>
+                      <Input inputMode="numeric" placeholder="e.g. 6109" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="tax_rate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>GST rate</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value={NONE}>No default</SelectItem>
+                        {[...new Set([...GST_RATES, field.value])]
+                          .filter((r) => r !== NONE)
+                          .map((rate) => (
+                            <SelectItem key={rate} value={rate}>
+                              {rate}%
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <p className="-mt-2 text-xs text-muted-foreground">
+              Filled in automatically when this category is picked for a new product.
+            </p>
             <FormField
               control={form.control}
               name="description"
@@ -253,6 +318,8 @@ export function CategoriesPage() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Parent</TableHead>
+                <TableHead>HSN/SAC</TableHead>
+                <TableHead>GST</TableHead>
                 <TableHead>Status</TableHead>
                 <RoleGate min="STAFF">
                   <TableHead className="w-24" />
@@ -265,6 +332,12 @@ export function CategoriesPage() {
                   <TableCell className="font-medium">{category.name}</TableCell>
                   <TableCell className="text-muted-foreground">
                     {parentName(category.parent_id)}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {category.hsn_sac_code || '—'}
+                  </TableCell>
+                  <TableCell>
+                    {category.tax_rate != null ? `${Number(category.tax_rate)}%` : '—'}
                   </TableCell>
                   <TableCell>
                     <ActiveBadge active={category.is_active} />

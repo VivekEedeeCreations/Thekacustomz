@@ -21,6 +21,8 @@ import { useProducts } from '@/features/products/queries';
 import { useVendors } from '@/features/vendors/queries';
 import { formatQuantity } from '@/lib/format';
 
+import { DashboardOrders } from './dashboard-orders';
+
 function StatCard({
   label,
   value,
@@ -73,9 +75,12 @@ export function DashboardPage() {
     <div>
       <PageHeader
         title={`Welcome${profile?.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}`}
-        description="An overview of your catalog and stock."
+        description="An overview of your orders, catalog and stock."
       />
 
+      <DashboardOrders />
+
+      <h3 className="mb-3 mt-8 text-sm font-medium">Catalog</h3>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Products"

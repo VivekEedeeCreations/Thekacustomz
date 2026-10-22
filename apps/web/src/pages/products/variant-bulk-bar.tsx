@@ -1,8 +1,9 @@
 import { useMemo, useState, type ComponentProps } from 'react';
-import { Barcode as BarcodeIcon, Loader2, Pencil, X } from 'lucide-react';
+import { Barcode as BarcodeIcon, Loader2, Pencil, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { RoleGate } from '@/components/auth/role-gate';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -18,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import {
   useBulkGenerateVariantBarcodes,
   useBulkUpdateVariants,
+  useDeleteVariants,
   type BulkVariantPatch,
 } from '@/features/products/mutations';
 import { useAllBarcodes } from '@/features/products/queries';
@@ -217,7 +219,9 @@ export function VariantBulkBar({
 }) {
   const { data: allBarcodes } = useAllBarcodes();
   const generate = useBulkGenerateVariantBarcodes();
+  const deleteVariants = useDeleteVariants();
   const [editOpen, setEditOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const withoutBarcode = useMemo(() => {
     const have = new Set((allBarcodes ?? []).map((b) => b.variant_id).filter(Boolean));
@@ -276,12 +280,41 @@ export function VariantBulkBar({
             <Pencil className="h-4 w-4" />
             Edit price / HSN
           </Button>
+          <RoleGate min="ADMIN">
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive"
+              onClick={() => setConfirmDelete(true)}
+              disabled={deleteVariants.isPending}
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete
+            </Button>
+          </RoleGate>
           <Button size="sm" variant="ghost" onClick={onClear}>
             <X className="h-4 w-4" />
             Clear
           </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete ${selectedIds.length} variant${selectedIds.length === 1 ? '' : 's'}?`}
+        description="Their barcodes and images are removed too. If any of them has stock history or orders, nothing is deleted."
+        confirmLabel="Delete"
+        onConfirm={async () => {
+          try {
+            const count = await deleteVariants.mutateAsync(selectedIds);
+            toast.success(`Deleted ${count} variant${count === 1 ? '' : 's'}`);
+            onClear();
+          } catch (error) {
+            toast.error('Could not delete variants', { description: (error as Error).message });
+          }
+        }}
+      />
 
       <BulkEditDialog
         open={editOpen}

@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/table';
 import {
   useCreateVariant,
-  useDeleteVariant,
+  useDeleteVariants,
   useUpdateVariant,
 } from '@/features/products/mutations';
 import { useProduct, useProductVariants, type ProductVariant } from '@/features/products/queries';
@@ -309,7 +309,7 @@ function VariantBarcodesDialog({ variant }: { variant: ProductVariant }) {
 
 export function VariantManager({ productId }: { productId: string }) {
   const { data: variants, isLoading } = useProductVariants(productId);
-  const deleteVariant = useDeleteVariant(productId);
+  const deleteVariants = useDeleteVariants();
   const { data: product } = useProduct(productId);
   const [pendingDelete, setPendingDelete] = useState<ProductVariant | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -462,12 +462,12 @@ export function VariantManager({ productId }: { productId: string }) {
         open={!!pendingDelete}
         onOpenChange={(open) => !open && setPendingDelete(null)}
         title="Delete variant?"
-        description={`"${pendingDelete?.sku}" will be permanently removed. This is blocked if it has inventory history.`}
+        description={`"${pendingDelete?.sku}" and its barcodes and images will be permanently removed. This is blocked if it has stock history or orders.`}
         confirmLabel="Delete"
         onConfirm={async () => {
           if (!pendingDelete) return;
           try {
-            await deleteVariant.mutateAsync(pendingDelete.id);
+            await deleteVariants.mutateAsync([pendingDelete.id]);
             toast.success('Variant deleted');
           } catch (error) {
             toast.error('Could not delete variant', { description: (error as Error).message });

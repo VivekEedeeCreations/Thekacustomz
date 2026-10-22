@@ -1,11 +1,14 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { PRODUCT_TYPE_LABELS, PRODUCT_TYPES } from '@inventory/shared';
 
+import { RoleGate } from '@/components/auth/role-gate';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,8 +34,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/hooks/use-auth';
 import { useCategories } from '@/features/categories/queries';
-import { useCreateProduct, useUpdateProduct } from '@/features/products/mutations';
-import { useProduct } from '@/features/products/queries';
+import {
+  useCreateProduct,
+  useDeleteProduct,
+  useUpdateProduct,
+} from '@/features/products/mutations';
+import { useProduct, useProductVariants } from '@/features/products/queries';
 
 import { BarcodeManager } from './barcode-manager';
 import { ImageManager } from './image-manager';
@@ -67,6 +74,9 @@ export function ProductFormPage() {
   const { data: categories } = useCategories();
   const createProduct = useCreateProduct();
   const updateProduct = useUpdateProduct();
+  const deleteProduct = useDeleteProduct();
+  const { data: variants } = useProductVariants(productId);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -101,6 +111,27 @@ export function ProductFormPage() {
       is_active: true,
     },
   });
+
+  /**
+   * Copies the category's HSN/SAC code and GST rate into the form. A new product always takes
+   * them; an existing product only fills fields that are still empty, so saved values stay put.
+   */
+  const applyCategoryDefaults = (categoryId: string) => {
+    const category = categories?.find((c) => c.id === categoryId);
+    if (!category) return;
+    const filled: string[] = [];
+    const currentHsn = form.getValues('hsn_sac_code');
+    if (category.hsn_sac_code && (!isEditing || !currentHsn)) {
+      form.setValue('hsn_sac_code', category.hsn_sac_code, { shouldDirty: true });
+      filled.push(`HSN ${category.hsn_sac_code}`);
+    }
+    const currentRate = Number(form.getValues('tax_rate'));
+    if (category.tax_rate != null && (!isEditing || !currentRate)) {
+      form.setValue('tax_rate', Number(category.tax_rate), { shouldDirty: true });
+      filled.push(`GST ${Number(category.tax_rate)}%`);
+    }
+    if (filled.length > 0) toast.info(`Filled ${filled.join(' and ')} from ${category.name}`);
+  };
 
   const onSubmit = form.handleSubmit(async (values) => {
     const payload = {
@@ -146,6 +177,43 @@ export function ProductFormPage() {
             ? `SKU ${product?.sku}`
             : 'Start with the parent product. Sizes, colors and designs are added as variants once it is saved.'
         }
+        actions={
+          isEditing && product ? (
+            <RoleGate min="ADMIN">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive"
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete product
+              </Button>
+            </RoleGate>
+          ) : undefined
+        }
+      />
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Delete product?"
+        description={`"${product?.name}"${
+          variants && variants.length > 0
+            ? `, its ${variants.length} variant${variants.length === 1 ? '' : 's'},`
+            : ''
+        } and its barcodes and images will be removed. This is blocked if the product or any variant has stock history or orders.`}
+        confirmLabel="Delete"
+        onConfirm={async () => {
+          if (!product) return;
+          try {
+            await deleteProduct.mutateAsync(product.id);
+            toast.success('Product deleted');
+            navigate('/products', { replace: true });
+          } catch (error) {
+            toast.error('Could not delete product', { description: (error as Error).message });
+          }
+        }}
       />
 
       <div className="max-w-2xl rounded-lg border p-4 sm:p-6">
@@ -202,7 +270,13 @@ export function ProductFormPage() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Category</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      <Select
+                        value={field.value}
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          applyCategoryDefaults(value);
+                        }}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue />
@@ -217,6 +291,9 @@ export function ProductFormPage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <FormDescription>
+                        Fills HSN/SAC and GST rate from the category.
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

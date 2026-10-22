@@ -1,7 +1,8 @@
 import { useId, useMemo, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
 
 import { PageHeader } from '@/components/page-header';
+import { RoleGate } from '@/components/auth/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import type { PricingCalculation } from '@/features/pricing-calculations/queries';
 import { formatCurrency } from '@/lib/format';
 import {
   breakdownFromSellingPrice,
@@ -24,6 +26,9 @@ import {
   type PriceBreakdown,
   type PriceTarget,
 } from '@/lib/pricing-calculator';
+
+import { EMPTY_CALCULATOR_STATE, stateFromJson, type CalculatorState } from './calculator-state';
+import { SaveCalculationDialog, SavedCalculationsList } from './saved-calculations';
 
 const CUSTOM_GST = '__custom__';
 
@@ -161,6 +166,39 @@ export function PricingCalculatorPage() {
   const [sellingPriceInput, setSellingPriceInput] = useState('');
   const [targetMode, setTargetMode] = useState<PriceTarget['mode']>('MARGIN_PERCENT');
   const [targetValueInput, setTargetValueInput] = useState('');
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [loaded, setLoaded] = useState<PricingCalculation | null>(null);
+
+  const snapshot: CalculatorState = {
+    rawCost,
+    costs,
+    gstChoice,
+    customGst,
+    sellingPrice: sellingPriceInput,
+    targetMode,
+    targetValue: targetValueInput,
+  };
+
+  const applyState = (state: CalculatorState) => {
+    setRawCost(state.rawCost);
+    setCosts(state.costs);
+    setGstChoice(state.gstChoice);
+    setCustomGst(state.customGst);
+    setSellingPriceInput(state.sellingPrice);
+    setTargetMode(state.targetMode);
+    setTargetValueInput(state.targetValue);
+  };
+
+  const loadCalculation = (calc: PricingCalculation) => {
+    applyState(stateFromJson(calc.inputs));
+    setLoaded(calc);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const startNew = () => {
+    applyState(EMPTY_CALCULATOR_STATE);
+    setLoaded(null);
+  };
 
   const gstRatePercent = Math.min(
     100,
@@ -199,8 +237,30 @@ export function PricingCalculatorPage() {
     <div>
       <PageHeader
         title="Price calculator"
-        description="Work out your margin from a selling price, or find the selling price for a target margin. Nothing here is saved — copy a result into a product's price yourself."
+        description="Work out your margin from a selling price, or find the selling price for a target margin. Save a calculation to come back to it — copy a result into a product's price yourself."
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={startNew}>
+              <RotateCcw className="h-4 w-4" />
+              New
+            </Button>
+            <RoleGate min="STAFF">
+              <Button size="sm" onClick={() => setSaveOpen(true)}>
+                <Save className="h-4 w-4" />
+                Save
+              </Button>
+            </RoleGate>
+          </div>
+        }
       />
+
+      {loaded ? (
+        <p className="mb-4 text-sm text-muted-foreground">
+          Editing saved calculation{' '}
+          <span className="font-medium text-foreground">{loaded.title}</span>. Changes aren&apos;t
+          saved until you press Save.
+        </p>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
@@ -367,6 +427,24 @@ export function PricingCalculatorPage() {
           </div>
         </div>
       </div>
+
+      <div className="mt-6">
+        <SavedCalculationsList
+          currentId={loaded?.id ?? null}
+          onLoad={loadCalculation}
+          onDeleted={(id) => {
+            if (loaded?.id === id) setLoaded(null);
+          }}
+        />
+      </div>
+
+      <SaveCalculationDialog
+        open={saveOpen}
+        onOpenChange={setSaveOpen}
+        state={snapshot}
+        current={loaded}
+        onSaved={setLoaded}
+      />
     </div>
   );
 }

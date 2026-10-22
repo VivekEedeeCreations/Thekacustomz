@@ -19,6 +19,12 @@ export function formatDate(value: string | null | undefined): string {
   return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium' }).format(new Date(value));
 }
 
+/** Today's date in local time as yyyy-mm-dd (what `<input type="date">` uses). */
+export function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—';
   return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(

@@ -81,6 +81,8 @@ export interface Database {
           name: string;
           slug: string | null;
           description: string | null;
+          hsn_sac_code: string | null;
+          tax_rate: number | null;
           is_active: boolean;
           created_at: string;
           updated_at: string;
@@ -91,6 +93,8 @@ export interface Database {
           name: string;
           slug?: string | null;
           description?: string | null;
+          hsn_sac_code?: string | null;
+          tax_rate?: number | null;
           is_active?: boolean;
         };
         Update: Partial<Database['public']['Tables']['categories']['Insert']>;
@@ -439,6 +443,7 @@ export interface Database {
           ready_at: string | null;
           ready_by: string | null;
           dispatched_at: string | null;
+          delivered_at: string | null;
           notes: string | null;
           created_at: string;
           updated_at: string;
@@ -620,6 +625,109 @@ export interface Database {
         Update: never;
         Relationships: [];
       };
+      petty_entries: {
+        Row: {
+          id: string;
+          entry_date: string;
+          entry_type: 'INCOME' | 'EXPENSE';
+          amount: number;
+          category: string;
+          payment_mode: string | null;
+          description: string | null;
+          reference: string | null;
+          status: 'SETTLED' | 'PENDING';
+          due_date: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          entry_date?: string;
+          entry_type: 'INCOME' | 'EXPENSE';
+          status?: 'SETTLED' | 'PENDING';
+          due_date?: string | null;
+          amount: number;
+          category: string;
+          payment_mode?: string | null;
+          description?: string | null;
+          reference?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['petty_entries']['Insert']>;
+        Relationships: [];
+      };
+      sku_aliases: {
+        Row: {
+          id: string;
+          external_key: string;
+          product_id: string;
+          variant_id: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          external_key: string;
+          product_id: string;
+          variant_id?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['sku_aliases']['Insert']>;
+        Relationships: [];
+      };
+      pricing_calculations: {
+        Row: {
+          id: string;
+          title: string;
+          description: string | null;
+          inputs: Json;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          description?: string | null;
+          inputs?: Json;
+        };
+        Update: Partial<Database['public']['Tables']['pricing_calculations']['Insert']>;
+        Relationships: [];
+      };
+      fba_targets: {
+        Row: {
+          id: string;
+          product_id: string;
+          variant_id: string | null;
+          variant_key: string;
+          amazon_sku: string | null;
+          fnsku: string | null;
+          target_quantity: number;
+          pricing_calculation_id: string | null;
+          notes: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        // Written through the save_fba_target RPC; direct deletes only.
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      fba_target_materials: {
+        Row: {
+          id: string;
+          fba_target_id: string;
+          material_product_id: string;
+          material_variant_id: string | null;
+          material_variant_key: string;
+          quantity_per_unit: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -641,6 +749,10 @@ export interface Database {
       };
       create_order: {
         Args: { p_order: Json; p_items: Json };
+        Returns: string;
+      };
+      save_fba_target: {
+        Args: { p_target: Json; p_materials: Json };
         Returns: string;
       };
       current_app_role: {

@@ -1,5 +1,6 @@
 import { useSearchParams } from 'react-router-dom';
 
+import { RoleGate } from '@/components/auth/role-gate';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -9,6 +10,7 @@ import { useReturns } from '@/features/returns/queries';
 
 import { DispatchTab } from './dispatch-tab';
 import { ExchangesTab } from './exchanges-tab';
+import { ImportOrdersDialog } from './import-orders-dialog';
 import { OrdersTab } from './orders-tab';
 import { ReturnsTab } from './returns-tab';
 
@@ -51,6 +53,11 @@ export function OrdersPage() {
       <PageHeader
         title="Orders"
         description="Fulfil Amazon, Flipkart, Meesho, Shopify and Instagram orders — link AWBs, scan to dispatch, and handle returns and exchanges."
+        actions={
+          <RoleGate min="STAFF">
+            <ImportOrdersDialog />
+          </RoleGate>
+        }
       />
       <Tabs
         value={tab}

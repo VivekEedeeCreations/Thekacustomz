@@ -41,14 +41,83 @@ export function useUpdateProduct() {
   });
 }
 
+/**
+ * Catalog rows referenced by stock movements, orders, purchases or FBA material lists are
+ * protected by `on delete restrict` foreign keys (23503); say so in plain words.
+ */
+function deleteError(error: { code?: string; message: string }, what: string): Error {
+  if (error.code === '23503') {
+    return new Error(
+      `This ${what} is used in stock history, orders, purchases or an FBA target's raw materials, so it can't be deleted. Mark it inactive instead.`,
+    );
+  }
+  return new Error(error.message);
+}
+
+/** Storage paths of images owned by the given product and/or variants (rows cascade; files don't). */
+async function imagePathsFor(filter: { productId?: string; variantIds?: string[] }) {
+  const paths: string[] = [];
+  if (filter.productId) {
+    const { data } = await supabase
+      .from('product_images')
+      .select('storage_path')
+      .eq('product_id', filter.productId);
+    paths.push(...(data ?? []).map((r) => r.storage_path));
+  }
+  if (filter.variantIds && filter.variantIds.length > 0) {
+    const { data } = await supabase
+      .from('product_images')
+      .select('storage_path')
+      .in('variant_id', filter.variantIds);
+    paths.push(...(data ?? []).map((r) => r.storage_path));
+  }
+  return paths;
+}
+
+async function removeImageFiles(paths: string[]) {
+  // Best effort: the rows are already gone, so a leftover file is only wasted space.
+  if (paths.length > 0) await supabase.storage.from(PRODUCT_IMAGES_BUCKET).remove(paths);
+}
+
+/** Everything a product/variant delete can change, including cascaded rows. */
+function invalidateCatalog(queryClient: QueryClient) {
+  for (const key of [
+    'products',
+    'product-variants',
+    'product-images',
+    'barcodes',
+    'fba-targets',
+    'fba-target-materials',
+    'sku-aliases',
+  ]) {
+    void queryClient.invalidateQueries({ queryKey: [key] });
+  }
+}
+
+/**
+ * Deletes a parent product. Its variants, barcodes, images and FBA targets are removed with it
+ * by the database (on delete cascade); the image files are cleaned out of storage afterwards.
+ */
 export function useDeleteProduct() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('products').delete().eq('id', id);
-      if (error) throw error;
+      const { data: variants } = await supabase
+        .from('product_variants')
+        .select('id')
+        .eq('product_id', id);
+      const paths = await imagePathsFor({
+        productId: id,
+        variantIds: (variants ?? []).map((v) => v.id),
+      });
+
+      const { data, error } = await supabase.from('products').delete().eq('id', id).select('id');
+      if (error) throw deleteError(error, 'product or one of its variants');
+      if (!data || data.length === 0) throw new Error('Only an admin can delete products.');
+
+      await removeImageFiles(paths);
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['products'] }),
+    onSuccess: () => invalidateCatalog(queryClient),
   });
 }
 
@@ -90,15 +159,27 @@ export function useUpdateVariant(productId: string) {
   });
 }
 
-export function useDeleteVariant(productId: string) {
+/**
+ * Deletes variants (one or many) in a single statement, so a variant that can't be deleted
+ * (it has stock history or orders) leaves all of them in place. Resolves to how many went.
+ */
+export function useDeleteVariants() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('product_variants').delete().eq('id', id);
-      if (error) throw error;
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return 0;
+      const paths = await imagePathsFor({ variantIds: ids });
+      const { data, error } = await supabase
+        .from('product_variants')
+        .delete()
+        .in('id', ids)
+        .select('id');
+      if (error) throw deleteError(error, ids.length > 1 ? 'selection' : 'variant');
+      if (!data || data.length === 0) throw new Error('Only an admin can delete variants.');
+      await removeImageFiles(paths);
+      return data.length;
     },
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['product-variants', productId] }),
+    onSuccess: () => invalidateCatalog(queryClient),
   });
 }
 

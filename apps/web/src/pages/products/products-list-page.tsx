@@ -30,7 +30,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useCategories } from '@/features/categories/queries';
-import { useDeleteProduct } from '@/features/products/mutations';
+import { useDeleteProduct, useDeleteVariants } from '@/features/products/mutations';
 import {
   useAllProductImages,
   useAllVariants,
@@ -61,10 +61,12 @@ export function ProductsListPage() {
   const { data: categories } = useCategories();
   const { data: productImages } = useAllProductImages();
   const deleteProduct = useDeleteProduct();
+  const deleteVariants = useDeleteVariants();
 
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState(ALL);
   const [pendingDelete, setPendingDelete] = useState<Product | null>(null);
+  const [pendingVariantDelete, setPendingVariantDelete] = useState<ProductVariant | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -327,6 +329,9 @@ export function ProductsListPage() {
                                 <TableHead>Cost</TableHead>
                                 <TableHead>Price</TableHead>
                                 <TableHead>Status</TableHead>
+                                <RoleGate min="ADMIN">
+                                  <TableHead className="w-12" />
+                                </RoleGate>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -383,6 +388,19 @@ export function ProductsListPage() {
                                   <TableCell>
                                     <ActiveBadge active={variant.is_active} />
                                   </TableCell>
+                                  <RoleGate min="ADMIN">
+                                    <TableCell onClick={(e) => e.stopPropagation()}>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7"
+                                        aria-label={`Delete variant ${variant.sku}`}
+                                        onClick={() => setPendingVariantDelete(variant)}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </TableCell>
+                                  </RoleGate>
                                 </TableRow>
                               ))}
                             </TableBody>
@@ -402,15 +420,42 @@ export function ProductsListPage() {
         open={!!pendingDelete}
         onOpenChange={(open) => !open && setPendingDelete(null)}
         title="Delete product?"
-        description={`"${pendingDelete?.name}" and its variants/barcodes/images will be removed. This is blocked if it has inventory history.`}
+        description={(() => {
+          const count = pendingDelete ? (variantsByProduct.get(pendingDelete.id)?.length ?? 0) : 0;
+          const variantsNote = count > 0 ? `its ${count} variant${count === 1 ? '' : 's'}, ` : '';
+          return `"${pendingDelete?.name}" and ${variantsNote}its barcodes and images will be removed. This is blocked if the product or any variant has stock history or orders.`;
+        })()}
         confirmLabel="Delete"
         onConfirm={async () => {
           if (!pendingDelete) return;
           try {
             await deleteProduct.mutateAsync(pendingDelete.id);
+            setSelected((prev) => {
+              const next = new Set(prev);
+              for (const v of variantsByProduct.get(pendingDelete.id) ?? []) next.delete(v.id);
+              return next;
+            });
             toast.success('Product deleted');
           } catch (error) {
             toast.error('Could not delete product', { description: (error as Error).message });
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!pendingVariantDelete}
+        onOpenChange={(open) => !open && setPendingVariantDelete(null)}
+        title="Delete variant?"
+        description={`"${pendingVariantDelete?.sku}" and its barcodes and images will be removed. This is blocked if it has stock history or orders.`}
+        confirmLabel="Delete"
+        onConfirm={async () => {
+          if (!pendingVariantDelete) return;
+          try {
+            await deleteVariants.mutateAsync([pendingVariantDelete.id]);
+            setSelection([pendingVariantDelete.id], false);
+            toast.success('Variant deleted');
+          } catch (error) {
+            toast.error('Could not delete variant', { description: (error as Error).message });
           }
         }}
       />
