@@ -50,6 +50,7 @@ import { formatCurrency, formatDate, todayIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import { daysUntil, periodFor, shiftAnchor, type PeriodKind } from './period';
+import { BankAccountsSection } from './bank-accounts-section';
 import { PettyEntryDialog } from './petty-entry-dialog';
 
 const ALL = 'ALL';
@@ -201,7 +202,7 @@ export function PettyBookPage() {
     <div>
       <PageHeader
         title="Petty book"
-        description="Money in and out, what's still to be received or paid, and the running balance."
+        description="Bank balances, money in and out, what's still to be received or paid, and the running balance."
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => openDialog('INCOME')}>
@@ -215,6 +216,8 @@ export function PettyBookPage() {
           </>
         }
       />
+
+      <BankAccountsSection cashInHand={currentBalance ?? 0} cashLoading={currentLoading} />
 
       {/* Receivables & payables ------------------------------------------------ */}
       <section className="mb-8">

@@ -357,6 +357,7 @@ export interface Database {
           shipping_amount: number;
           total_amount: number;
           notes: string | null;
+          vendor_bill_number: string | null;
           created_at: string;
           updated_at: string;
           created_by: string | null;
@@ -387,6 +388,28 @@ export interface Database {
         };
         Insert: Partial<Database['public']['Tables']['purchase_order_items']['Row']>;
         Update: Partial<Database['public']['Tables']['purchase_order_items']['Row']>;
+        Relationships: [];
+      };
+      purchase_documents: {
+        Row: {
+          id: string;
+          purchase_order_id: string;
+          storage_path: string;
+          file_name: string | null;
+          content_type: string | null;
+          size_bytes: number | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          purchase_order_id: string;
+          storage_path: string;
+          file_name?: string | null;
+          content_type?: string | null;
+          size_bytes?: number | null;
+        };
+        Update: never;
         Relationships: [];
       };
       purchase_receipts: {
@@ -625,6 +648,33 @@ export interface Database {
         Update: never;
         Relationships: [];
       };
+      bank_accounts: {
+        Row: {
+          id: string;
+          account_name: string;
+          account_number: string;
+          bank_name: string | null;
+          current_balance: number;
+          balance_as_of: string;
+          notes: string | null;
+          is_active: boolean;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          account_name: string;
+          account_number: string;
+          bank_name?: string | null;
+          current_balance?: number;
+          balance_as_of?: string;
+          notes?: string | null;
+          is_active?: boolean;
+        };
+        Update: Partial<Database['public']['Tables']['bank_accounts']['Insert']>;
+        Relationships: [];
+      };
       petty_entries: {
         Row: {
           id: string;
@@ -749,6 +799,10 @@ export interface Database {
       };
       create_order: {
         Args: { p_order: Json; p_items: Json };
+        Returns: string;
+      };
+      record_purchase: {
+        Args: { p_purchase: Json; p_items: Json };
         Returns: string;
       };
       save_fba_target: {

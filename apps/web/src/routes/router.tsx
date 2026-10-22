@@ -17,6 +17,7 @@ import { PettyBookPage } from '@/pages/petty-book/petty-book-page';
 import { PricingCalculatorPage } from '@/pages/pricing-calculator/pricing-calculator-page';
 import { ProductFormPage } from '@/pages/products/product-form-page';
 import { ProductsListPage } from '@/pages/products/products-list-page';
+import { PurchasesPage } from '@/pages/purchases/purchases-page';
 import { ScanPage } from '@/pages/scan/scan-page';
 import { UsersPage } from '@/pages/users-page';
 import { VendorsPage } from '@/pages/vendors-page';
@@ -46,6 +47,7 @@ export const router = createBrowserRouter([
           { path: 'pricing-calculator', element: <PricingCalculatorPage /> },
           { path: 'fba-targets', element: <FbaTargetsPage /> },
           { path: 'petty-book', element: <PettyBookPage /> },
+          { path: 'purchases', element: <PurchasesPage /> },
           { path: 'inventory', element: <InventoryPage /> },
           { path: 'orders', element: <OrdersPage /> },
           {
