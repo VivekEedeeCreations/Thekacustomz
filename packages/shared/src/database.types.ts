@@ -801,6 +801,10 @@ export interface Database {
         Args: { p_order: Json; p_items: Json };
         Returns: string;
       };
+      merge_products: {
+        Args: { p_keep: string; p_merge: string };
+        Returns: number;
+      };
       record_purchase: {
         Args: { p_purchase: Json; p_items: Json };
         Returns: string;

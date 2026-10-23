@@ -43,6 +43,7 @@ import { useProduct, useProductVariants } from '@/features/products/queries';
 
 import { BarcodeManager } from './barcode-manager';
 import { ImageManager } from './image-manager';
+import { MergeProductDialog } from './merge-product-dialog';
 import { VariantManager } from './variant-manager';
 
 const NONE = '__none__';
@@ -180,6 +181,7 @@ export function ProductFormPage() {
         actions={
           isEditing && product ? (
             <RoleGate min="ADMIN">
+              <MergeProductDialog keep={product} />
               <Button
                 variant="outline"
                 size="sm"

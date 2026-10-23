@@ -161,6 +161,38 @@ export function useDeleteProduct() {
   });
 }
 
+/**
+ * Moves every variant of `mergeId` (with its stock, orders, purchases, returns, exchanges and
+ * FBA rows) under `keepId` and deletes `mergeId` — public.merge_products, one transaction,
+ * admin only. Resolves to the number of variants moved.
+ */
+export function useMergeProducts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ keepId, mergeId }: { keepId: string; mergeId: string }) => {
+      const { data, error } = await supabase.rpc('merge_products', {
+        p_keep: keepId,
+        p_merge: mergeId,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      invalidateCatalog(queryClient);
+      for (const key of [
+        'inventory',
+        'inventory-movements',
+        'orders',
+        'order-items',
+        'purchases',
+        'purchase-items',
+      ]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Variants
 // ---------------------------------------------------------------------------

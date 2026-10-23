@@ -1,7 +1,18 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { Barcode as BarcodeIcon, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Barcode as BarcodeIcon,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Pencil,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -9,6 +20,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog';
 import { EmptyState } from '@/components/empty-state';
 import { RoleGate } from '@/components/auth/role-gate';
 import { ActiveBadge } from '@/components/active-badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -53,6 +65,7 @@ import {
   type ProductVariant,
 } from '@/features/products/queries';
 import { formatCurrency } from '@/lib/format';
+import { compareSize, compareText, sortBy, type SortDirection } from '@/lib/variant-sort';
 
 import { BarcodeManager } from './barcode-manager';
 import { ImageManager } from './image-manager';
@@ -361,6 +374,38 @@ function VariantImagesDialog({
   );
 }
 
+type SortKey = 'size' | 'color';
+
+/** Column header that cycles ascending → descending → unsorted (original order). */
+function SortableHead({
+  label,
+  column,
+  sort,
+  onSort,
+}: {
+  label: string;
+  column: SortKey;
+  sort: { key: SortKey; direction: SortDirection } | null;
+  onSort: (column: SortKey) => void;
+}) {
+  const active = sort?.key === column ? sort.direction : null;
+  const Icon = active === 'asc' ? ArrowUp : active === 'desc' ? ArrowDown : ArrowUpDown;
+  return (
+    <TableHead
+      aria-sort={active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className="-ml-2 inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-muted"
+      >
+        {label}
+        <Icon className={active ? 'h-3.5 w-3.5' : 'h-3.5 w-3.5 opacity-40'} />
+      </button>
+    </TableHead>
+  );
+}
+
 export function VariantManager({ productId }: { productId: string }) {
   const { data: variants, isLoading } = useProductVariants(productId);
   const deleteVariants = useDeleteVariants();
@@ -369,10 +414,65 @@ export function VariantManager({ productId }: { productId: string }) {
   const thumbnails = useMemo(() => buildThumbnails(allImages ?? []), [allImages]);
   const [pendingDelete, setPendingDelete] = useState<ProductVariant | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection } | null>(null);
+  const [groupByDesign, setGroupByDesign] = useState(true);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const sortedVariants = useMemo(() => {
+    const list = variants ?? [];
+    if (!sort) return list;
+    return sort.key === 'size'
+      ? sortBy(list, (v) => v.size, compareSize, sort.direction)
+      : sortBy(list, (v) => v.color, compareText, sort.direction);
+  }, [variants, sort]);
+
+  /**
+   * Variants clubbed by design (case/space-insensitive), in name order with "No design" last.
+   * Null when grouping is off or there's only one design — nothing to club.
+   */
+  const groups = useMemo(() => {
+    if (!groupByDesign) return null;
+    const map = new Map<string, { key: string; label: string; variants: ProductVariant[] }>();
+    for (const v of sortedVariants) {
+      const label = v.design?.trim().replace(/\s+/g, ' ') ?? '';
+      const key = label.toLowerCase();
+      const group = map.get(key);
+      if (group) group.variants.push(v);
+      else map.set(key, { key, label: label || 'No design', variants: [v] });
+    }
+    if (map.size < 2) return null;
+    return [...map.values()]
+      .sort((x, y) => (!x.key ? 1 : !y.key ? -1 : compareText(x.label, y.label)))
+      .map((g) => ({
+        ...g,
+        // Distinct sizes in size order, as a quick summary on the group header.
+        sizes: [...new Set(g.variants.map((v) => v.size?.trim()).filter(Boolean) as string[])]
+          .sort(compareSize)
+          .join(' · '),
+      }));
+  }, [sortedVariants, groupByDesign]);
+
+  const toggleCollapsed = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+
+  const toggleSort = (key: SortKey) =>
+    setSort((prev) =>
+      prev?.key !== key
+        ? { key, direction: 'asc' }
+        : prev.direction === 'asc'
+          ? { key, direction: 'desc' }
+          : null,
+    );
 
   if (isLoading) return <Skeleton className="h-32 w-full" />;
 
   const variantIds = (variants ?? []).map((v) => v.id);
+  const hasSeveralDesigns =
+    new Set((variants ?? []).map((v) => v.design?.trim().toLowerCase() ?? '')).size > 1;
   const selectedIds = variantIds.filter((id) => selected.has(id));
   const allState =
     selectedIds.length === 0
@@ -391,11 +491,92 @@ export function VariantManager({ productId }: { productId: string }) {
       return next;
     });
 
+  const renderRow = (variant: ProductVariant) => (
+    <TableRow key={variant.id} data-state={selected.has(variant.id) ? 'selected' : undefined}>
+      <TableCell>
+        <RoleGate min="STAFF">
+          <Checkbox
+            aria-label={`Select variant ${variant.sku}`}
+            checked={selected.has(variant.id)}
+            onCheckedChange={(checked) => setSelection([variant.id], checked === true)}
+          />
+        </RoleGate>
+      </TableCell>
+      <TableCell>
+        <VariantImagesDialog
+          variant={variant}
+          image={thumbnails.byVariant.get(variant.id)}
+          fallback={thumbnails.byProduct.get(productId)}
+        />
+      </TableCell>
+      <TableCell className="font-medium">{variant.sku}</TableCell>
+      <TableCell>{variant.size || '—'}</TableCell>
+      <TableCell>{variant.color || '—'}</TableCell>
+      <TableCell>{variant.design || '—'}</TableCell>
+      <TableCell>
+        <InheritedValue own={variant.hsn_sac_code} inherited={product?.hsn_sac_code ?? null} />
+      </TableCell>
+      <TableCell>
+        <InheritedValue
+          own={variant.cost_price != null ? formatCurrency(variant.cost_price) : null}
+          inherited={product ? formatCurrency(product.cost_price) : null}
+        />
+      </TableCell>
+      <TableCell>
+        <InheritedValue
+          own={variant.selling_price != null ? formatCurrency(variant.selling_price) : null}
+          inherited={product ? formatCurrency(product.selling_price) : null}
+        />
+      </TableCell>
+      <TableCell>
+        <ActiveBadge active={variant.is_active} />
+      </TableCell>
+      <TableCell>
+        <div className="flex justify-end gap-1">
+          <VariantBarcodesDialog variant={variant} />
+          <RoleGate min="STAFF">
+            <VariantFormDialog
+              productId={productId}
+              variant={variant}
+              trigger={
+                <Button variant="ghost" size="icon" aria-label="Edit">
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              }
+            />
+          </RoleGate>
+          <RoleGate min="ADMIN">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Delete"
+              onClick={() => setPendingDelete(variant)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </RoleGate>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+
   return (
     <div className="space-y-3">
       <VariantBulkBar selectedIds={selectedIds} onClear={() => setSelected(new Set())} />
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {hasSeveralDesigns ? (
+          <div className="mr-auto flex items-center gap-2">
+            <Switch
+              id="group-by-design"
+              checked={groupByDesign}
+              onCheckedChange={setGroupByDesign}
+            />
+            <label htmlFor="group-by-design" className="text-sm">
+              Group by design
+            </label>
+          </div>
+        ) : null}
         <RoleGate min="STAFF">
           <VariantFormDialog
             productId={productId}
@@ -430,8 +611,8 @@ export function VariantManager({ productId }: { productId: string }) {
                 </TableHead>
                 <TableHead className="w-14">Image</TableHead>
                 <TableHead>SKU</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Color</TableHead>
+                <SortableHead label="Size" column="size" sort={sort} onSort={toggleSort} />
+                <SortableHead label="Color" column="color" sort={sort} onSort={toggleSort} />
                 <TableHead>Design</TableHead>
                 <TableHead>HSN/SAC</TableHead>
                 <TableHead>Cost</TableHead>
@@ -441,82 +622,58 @@ export function VariantManager({ productId }: { productId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {variants.map((variant) => (
-                <TableRow
-                  key={variant.id}
-                  data-state={selected.has(variant.id) ? 'selected' : undefined}
-                >
-                  <TableCell>
-                    <RoleGate min="STAFF">
-                      <Checkbox
-                        aria-label={`Select variant ${variant.sku}`}
-                        checked={selected.has(variant.id)}
-                        onCheckedChange={(checked) => setSelection([variant.id], checked === true)}
-                      />
-                    </RoleGate>
-                  </TableCell>
-                  <TableCell>
-                    <VariantImagesDialog
-                      variant={variant}
-                      image={thumbnails.byVariant.get(variant.id)}
-                      fallback={thumbnails.byProduct.get(productId)}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">{variant.sku}</TableCell>
-                  <TableCell>{variant.size || '—'}</TableCell>
-                  <TableCell>{variant.color || '—'}</TableCell>
-                  <TableCell>{variant.design || '—'}</TableCell>
-                  <TableCell>
-                    <InheritedValue
-                      own={variant.hsn_sac_code}
-                      inherited={product?.hsn_sac_code ?? null}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <InheritedValue
-                      own={variant.cost_price != null ? formatCurrency(variant.cost_price) : null}
-                      inherited={product ? formatCurrency(product.cost_price) : null}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <InheritedValue
-                      own={
-                        variant.selling_price != null ? formatCurrency(variant.selling_price) : null
-                      }
-                      inherited={product ? formatCurrency(product.selling_price) : null}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <ActiveBadge active={variant.is_active} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <VariantBarcodesDialog variant={variant} />
-                      <RoleGate min="STAFF">
-                        <VariantFormDialog
-                          productId={productId}
-                          variant={variant}
-                          trigger={
-                            <Button variant="ghost" size="icon" aria-label="Edit">
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          }
-                        />
-                      </RoleGate>
-                      <RoleGate min="ADMIN">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Delete"
-                          onClick={() => setPendingDelete(variant)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </RoleGate>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {groups
+                ? groups.map((group) => {
+                    const ids = group.variants.map((v) => v.id);
+                    const count = ids.filter((id) => selected.has(id)).length;
+                    const isCollapsed = collapsed.has(group.key);
+                    return (
+                      <Fragment key={group.key || '__none__'}>
+                        <TableRow className="bg-muted/40 hover:bg-muted/40">
+                          <TableCell>
+                            <RoleGate min="STAFF">
+                              <Checkbox
+                                aria-label={`Select all ${group.label} variants`}
+                                checked={
+                                  count === 0
+                                    ? false
+                                    : count === ids.length
+                                      ? true
+                                      : 'indeterminate'
+                                }
+                                onCheckedChange={(checked) => setSelection(ids, checked === true)}
+                              />
+                            </RoleGate>
+                          </TableCell>
+                          <TableCell colSpan={10} className="py-2">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-2 font-medium"
+                              aria-expanded={!isCollapsed}
+                              onClick={() => toggleCollapsed(group.key)}
+                            >
+                              {isCollapsed ? (
+                                <ChevronRight className="h-4 w-4" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4" />
+                              )}
+                              <span className={group.key ? '' : 'italic text-muted-foreground'}>
+                                {group.label}
+                              </span>
+                              <Badge variant="secondary">{group.variants.length}</Badge>
+                            </button>
+                            {group.sizes ? (
+                              <span className="ml-3 text-xs text-muted-foreground">
+                                {group.sizes}
+                              </span>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                        {isCollapsed ? null : group.variants.map(renderRow)}
+                      </Fragment>
+                    );
+                  })
+                : sortedVariants.map(renderRow)}
             </TableBody>
           </Table>
         </div>
