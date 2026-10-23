@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Barcode as BarcodeIcon, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
@@ -14,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -43,11 +44,20 @@ import {
   useDeleteVariants,
   useUpdateVariant,
 } from '@/features/products/mutations';
-import { useProduct, useProductVariants, type ProductVariant } from '@/features/products/queries';
+import {
+  buildThumbnails,
+  useAllProductImages,
+  useProduct,
+  useProductVariants,
+  type ProductImage,
+  type ProductVariant,
+} from '@/features/products/queries';
 import { formatCurrency } from '@/lib/format';
 
 import { BarcodeManager } from './barcode-manager';
+import { ImageManager } from './image-manager';
 import { InheritedValue } from './inherited-value';
+import { ItemThumbnail } from './item-thumbnail';
 import { VariantBulkBar } from './variant-bulk-bar';
 
 const schema = z.object({
@@ -67,6 +77,21 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
+/** Form values for a variant (or a blank one), read fresh each time the dialog opens. */
+function formValuesFor(variant?: ProductVariant): FormValues {
+  return {
+    sku: variant?.sku ?? '',
+    name: variant?.name ?? '',
+    size: variant?.size ?? '',
+    color: variant?.color ?? '',
+    design: variant?.design ?? '',
+    cost_price: variant?.cost_price ?? undefined,
+    selling_price: variant?.selling_price ?? undefined,
+    hsn_sac_code: variant?.hsn_sac_code ?? '',
+    is_active: variant?.is_active ?? true,
+  };
+}
+
 function VariantFormDialog({
   productId,
   variant,
@@ -82,18 +107,15 @@ function VariantFormDialog({
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: {
-      sku: variant?.sku ?? '',
-      name: variant?.name ?? '',
-      size: variant?.size ?? '',
-      color: variant?.color ?? '',
-      design: variant?.design ?? '',
-      cost_price: variant?.cost_price ?? undefined,
-      selling_price: variant?.selling_price ?? undefined,
-      hsn_sac_code: variant?.hsn_sac_code ?? '',
-      is_active: variant?.is_active ?? true,
-    },
+    defaultValues: formValuesFor(variant),
   });
+
+  // The dialog stays mounted, so without this it would reopen showing whatever was typed last
+  // time — even if that was never saved — instead of what the variant actually has now.
+  const handleOpenChange = (next: boolean) => {
+    if (next) form.reset(formValuesFor(variant));
+    setOpen(next);
+  };
 
   const onSubmit = form.handleSubmit(async (values) => {
     const payload = {
@@ -114,15 +136,6 @@ function VariantFormDialog({
       } else {
         await createVariant.mutateAsync({ ...payload, product_id: productId });
         toast.success('Variant created');
-        form.reset({
-          sku: '',
-          name: '',
-          size: '',
-          color: '',
-          design: '',
-          hsn_sac_code: '',
-          is_active: true,
-        });
       }
       setOpen(false);
     } catch (error) {
@@ -133,7 +146,7 @@ function VariantFormDialog({
   const isSubmitting = createVariant.isPending || updateVariant.isPending;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -307,10 +320,53 @@ function VariantBarcodesDialog({ variant }: { variant: ProductVariant }) {
   );
 }
 
+/**
+ * A variant's own image set (separate from the parent product's), opened from its thumbnail.
+ * Until the variant has a picture, the thumbnail shows the parent's, faded.
+ */
+function VariantImagesDialog({
+  variant,
+  image,
+  fallback,
+}: {
+  variant: ProductVariant;
+  image?: ProductImage;
+  fallback?: ProductImage;
+}) {
+  const [open, setOpen] = useState(false);
+  const detail = [variant.size, variant.color, variant.design].filter(Boolean).join(' / ');
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`Images of ${variant.sku}`}
+          title={image ? 'Variant images' : 'No variant images yet (showing the product image)'}
+        >
+          <ItemThumbnail image={image} fallback={fallback} alt={variant.sku} />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Images: {variant.sku}</DialogTitle>
+          <DialogDescription>
+            {detail ? `${detail}. ` : ''}These belong to this variant only. Without any, it shows
+            the parent product&apos;s images.
+          </DialogDescription>
+        </DialogHeader>
+        <ImageManager owner={{ variantId: variant.id }} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function VariantManager({ productId }: { productId: string }) {
   const { data: variants, isLoading } = useProductVariants(productId);
   const deleteVariants = useDeleteVariants();
   const { data: product } = useProduct(productId);
+  const { data: allImages } = useAllProductImages();
+  const thumbnails = useMemo(() => buildThumbnails(allImages ?? []), [allImages]);
   const [pendingDelete, setPendingDelete] = useState<ProductVariant | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -372,6 +428,7 @@ export function VariantManager({ productId }: { productId: string }) {
                     />
                   </RoleGate>
                 </TableHead>
+                <TableHead className="w-14">Image</TableHead>
                 <TableHead>SKU</TableHead>
                 <TableHead>Size</TableHead>
                 <TableHead>Color</TableHead>
@@ -397,6 +454,13 @@ export function VariantManager({ productId }: { productId: string }) {
                         onCheckedChange={(checked) => setSelection([variant.id], checked === true)}
                       />
                     </RoleGate>
+                  </TableCell>
+                  <TableCell>
+                    <VariantImagesDialog
+                      variant={variant}
+                      image={thumbnails.byVariant.get(variant.id)}
+                      fallback={thumbnails.byProduct.get(productId)}
+                    />
                   </TableCell>
                   <TableCell className="font-medium">{variant.sku}</TableCell>
                   <TableCell>{variant.size || '—'}</TableCell>

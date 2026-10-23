@@ -7,14 +7,53 @@ import { supabase } from '@/lib/supabase';
 import type { BarcodeOwner } from './queries';
 
 // ---------------------------------------------------------------------------
+// SKU clashes
+// ---------------------------------------------------------------------------
+/**
+ * SKUs are unique across products and variants together (unique indexes plus
+ * internal.assert_sku_unique). Postgres only says "already used", so look up who holds the SKU
+ * and name it — that's what tells the user which item to rename first.
+ */
+async function skuError(error: { code?: string; message: string }, sku: string | undefined) {
+  if (error.code !== '23505' || !sku || !/sku/i.test(error.message)) return error;
+  const value = sku.trim();
+  const [{ data: product }, { data: variant }] = await Promise.all([
+    supabase.from('products').select('name').eq('sku', value).maybeSingle(),
+    supabase
+      .from('product_variants')
+      .select('sku, size, color, design, product_id')
+      .eq('sku', value)
+      .maybeSingle(),
+  ]);
+  if (product) {
+    return new Error(`SKU "${value}" is already used by the product "${product.name}".`);
+  }
+  if (variant) {
+    const { data: parent } = await supabase
+      .from('products')
+      .select('name')
+      .eq('id', variant.product_id)
+      .maybeSingle();
+    const detail = [variant.size, variant.color, variant.design].filter(Boolean).join(' / ');
+    return new Error(
+      `SKU "${value}" is already used by a variant of "${parent?.name ?? 'another product'}"${
+        detail ? ` (${detail})` : ''
+      }.`,
+    );
+  }
+  return new Error(`SKU "${value}" is already used by another product or variant.`);
+}
+
+// ---------------------------------------------------------------------------
 // Products
 // ---------------------------------------------------------------------------
 export function useCreateProduct() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: TablesInsert<'products'>) => {
-      const { data, error } = await supabase.from('products').insert(input).select().single();
-      if (error) throw error;
+      const row = { ...input, sku: input.sku.trim() };
+      const { data, error } = await supabase.from('products').insert(row).select().single();
+      if (error) throw await skuError(error, row.sku);
       return data;
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['products'] }),
@@ -25,13 +64,14 @@ export function useUpdateProduct() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...patch }: TablesUpdate<'products'> & { id: string }) => {
+      const row = patch.sku != null ? { ...patch, sku: patch.sku.trim() } : patch;
       const { data, error } = await supabase
         .from('products')
-        .update(patch)
+        .update(row)
         .eq('id', id)
         .select()
         .single();
-      if (error) throw error;
+      if (error) throw await skuError(error, row.sku);
       return data;
     },
     onSuccess: (data) => {
@@ -128,16 +168,15 @@ export function useCreateVariant() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: TablesInsert<'product_variants'>) => {
-      const { data, error } = await supabase
-        .from('product_variants')
-        .insert(input)
-        .select()
-        .single();
-      if (error) throw error;
+      const row = { ...input, sku: input.sku.trim() };
+      const { data, error } = await supabase.from('product_variants').insert(row).select().single();
+      if (error) throw await skuError(error, row.sku);
       return data;
     },
-    onSuccess: (data) =>
-      void queryClient.invalidateQueries({ queryKey: ['product-variants', data.product_id] }),
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: ['product-variants', data.product_id] });
+      void queryClient.invalidateQueries({ queryKey: ['product-variants', 'all'] });
+    },
   });
 }
 
@@ -145,17 +184,21 @@ export function useUpdateVariant(productId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...patch }: TablesUpdate<'product_variants'> & { id: string }) => {
+      const row = patch.sku != null ? { ...patch, sku: patch.sku.trim() } : patch;
       const { data, error } = await supabase
         .from('product_variants')
-        .update(patch)
+        .update(row)
         .eq('id', id)
         .select()
         .single();
-      if (error) throw error;
+      if (error) throw await skuError(error, row.sku);
       return data;
     },
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['product-variants', productId] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['product-variants', productId] });
+      // The products list reads every variant from this cache.
+      void queryClient.invalidateQueries({ queryKey: ['product-variants', 'all'] });
+    },
   });
 }
 

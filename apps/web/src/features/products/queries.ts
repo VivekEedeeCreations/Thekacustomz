@@ -104,21 +104,34 @@ export function useBarcodes(owner: BarcodeOwner | undefined) {
   });
 }
 
-/** Product-level images (not variant images) — used for list thumbnails. */
+/** Every image, product- and variant-level — used for list thumbnails (see `buildThumbnails`). */
 export function useAllProductImages() {
   return useQuery({
     queryKey: ['product-images', 'all'],
     queryFn: async (): Promise<ProductImage[]> => {
-      const { data, error } = await supabase
-        .from('product_images')
-        .select('*')
-        .is('variant_id', null)
-        .order('position');
+      const { data, error } = await supabase.from('product_images').select('*').order('position');
       if (error) throw error;
       return data;
     },
     staleTime: 30_000,
   });
+}
+
+/**
+ * One thumbnail per owner: its primary image, else the first by position (input is
+ * position-ordered). Product images are keyed by product id, variant images by variant id.
+ */
+export function buildThumbnails(images: ProductImage[]) {
+  const byProduct = new Map<string, ProductImage>();
+  const byVariant = new Map<string, ProductImage>();
+  for (const image of images) {
+    const map = image.variant_id ? byVariant : byProduct;
+    const key = image.variant_id ?? image.product_id;
+    if (!key) continue;
+    const current = map.get(key);
+    if (!current || (image.is_primary && !current.is_primary)) map.set(key, image);
+  }
+  return { byProduct, byVariant };
 }
 
 export function useProductImages(owner: BarcodeOwner | undefined) {
