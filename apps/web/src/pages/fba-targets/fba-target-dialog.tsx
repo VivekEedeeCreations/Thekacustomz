@@ -1,7 +1,8 @@
-import { useEffect, useId, useState } from 'react';
-import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { SearchableSelect } from '@/components/searchable-select';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -27,17 +28,15 @@ import { itemKey, parseItemKey } from '@/features/products/item-options';
 import { formatCurrency } from '@/lib/format';
 
 import type { useFbaData } from './fba-data';
+import {
+  linesFromMaterials,
+  materialInputs,
+  toSearchOptions,
+  type MaterialLine,
+} from './fba-materials';
+import { MaterialLinesEditor } from './fba-materials-editor';
 
 const NONE = '__none__';
-
-interface MaterialLine {
-  rowId: number;
-  key: string;
-  quantity: string;
-}
-
-let nextRowId = 0;
-const newRowId = () => ++nextRowId;
 
 export function FbaTargetDialog({
   open,
@@ -72,26 +71,24 @@ export function FbaTargetDialog({
     setFnsku(target?.fnsku ?? '');
     setCalculationId(target?.pricing_calculation_id ?? NONE);
     setNotes(target?.notes ?? '');
-    setLines(
-      targetMaterials.map((m) => ({
-        rowId: newRowId(),
-        key: itemKey(m.material_product_id, m.material_variant_id),
-        quantity: String(m.quantity_per_unit),
-      })),
-    );
+    setLines(linesFromMaterials(targetMaterials));
     // Only reset when the dialog opens, not when background queries refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, target?.id]);
 
-  const finishedOptions = data.options.filter((o) => o.product.product_type === 'PRODUCT');
   const materialOptions = data.options.filter((o) => o.product.product_type === 'RAW_MATERIAL');
-  const takenTargets = new Set(
-    data.targets.filter((t) => t.id !== target?.id).map((t) => itemKey(t.product_id, t.variant_id)),
-  );
+  const finishedSearch = useMemo(() => {
+    const taken = new Set(
+      data.targets
+        .filter((t) => t.id !== target?.id)
+        .map((t) => itemKey(t.product_id, t.variant_id)),
+    );
+    return toSearchOptions(
+      data.options.filter((o) => o.product.product_type === 'PRODUCT'),
+      taken,
+    );
+  }, [data.options, data.targets, target?.id]);
   const linked = calculationId !== NONE ? data.calculationById.get(calculationId) : undefined;
-
-  const updateLine = (rowId: number, patch: Partial<MaterialLine>) =>
-    setLines((prev) => prev.map((l) => (l.rowId === rowId ? { ...l, ...patch } : l)));
 
   const handleSave = async () => {
     if (!item) {
@@ -103,19 +100,10 @@ export function FbaTargetDialog({
       toast.error('Target quantity must be a whole number, 0 or more');
       return;
     }
-    const filled = lines.filter((l) => l.key);
-    const seen = new Set<string>();
-    for (const line of filled) {
-      const per = Number(line.quantity);
-      if (!(per > 0)) {
-        toast.error('Each raw material needs a quantity per unit greater than 0');
-        return;
-      }
-      if (seen.has(line.key)) {
-        toast.error('The same raw material is listed twice — combine the quantities');
-        return;
-      }
-      seen.add(line.key);
+    const materials = materialInputs(lines);
+    if (typeof materials === 'string') {
+      toast.error(materials);
+      return;
     }
 
     const { productId, variantId } = parseItemKey(item);
@@ -131,14 +119,7 @@ export function FbaTargetDialog({
           pricing_calculation_id: calculationId === NONE ? null : calculationId,
           notes,
         },
-        materials: filled.map((l) => {
-          const m = parseItemKey(l.key);
-          return {
-            material_product_id: m.productId,
-            material_variant_id: m.variantId,
-            quantity_per_unit: Number(l.quantity),
-          };
-        }),
+        materials,
       });
       toast.success(target ? 'FBA target updated' : 'FBA target added');
       onOpenChange(false);
@@ -166,19 +147,14 @@ export function FbaTargetDialog({
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_8rem]">
             <div className="space-y-1.5">
               <Label htmlFor={ids.item}>Finished SKU</Label>
-              <Select value={item} onValueChange={setItem}>
-                <SelectTrigger id={ids.item}>
-                  <SelectValue placeholder="Select a product or variant" />
-                </SelectTrigger>
-                <SelectContent>
-                  {finishedOptions.map((o) => (
-                    <SelectItem key={o.key} value={o.key} disabled={takenTargets.has(o.key)}>
-                      {o.label}
-                      {takenTargets.has(o.key) ? ' (already added)' : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                id={ids.item}
+                options={finishedSearch}
+                value={item}
+                onChange={setItem}
+                placeholder="Select a product or variant"
+                searchPlaceholder="Search SKU, name, size, color, design…"
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor={ids.qty}>Target qty</Label>
@@ -249,58 +225,11 @@ export function FbaTargetDialog({
 
           <div className="space-y-2">
             <Label>Raw materials per finished unit</Label>
-            {lines.map((line) => (
-              <div key={line.rowId} className="flex items-center gap-2">
-                <Select value={line.key} onValueChange={(key) => updateLine(line.rowId, { key })}>
-                  <SelectTrigger className="min-w-0 flex-1" aria-label="Raw material">
-                    <SelectValue placeholder="Select a raw material" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {materialOptions.map((o) => (
-                      <SelectItem key={o.key} value={o.key}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  type="number"
-                  min="0"
-                  step="any"
-                  aria-label="Quantity per unit"
-                  className="w-24 shrink-0"
-                  placeholder="Qty"
-                  value={line.quantity}
-                  onChange={(e) => updateLine(line.rowId, { quantity: e.target.value })}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Remove raw material"
-                  onClick={() => setLines((prev) => prev.filter((l) => l.rowId !== line.rowId))}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
-            {materialOptions.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                No raw materials in the catalog yet — add products with type “Raw material” first.
-              </p>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  setLines((prev) => [...prev, { rowId: newRowId(), key: '', quantity: '1' }])
-                }
-              >
-                <Plus className="h-4 w-4" />
-                Add raw material
-              </Button>
-            )}
+            <MaterialLinesEditor
+              lines={lines}
+              onChange={setLines}
+              materialOptions={materialOptions}
+            />
           </div>
 
           <div className="space-y-1.5">

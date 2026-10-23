@@ -44,6 +44,7 @@ import { cn } from '@/lib/utils';
 
 import { InheritedValue } from './inherited-value';
 import { ItemThumbnail } from './item-thumbnail';
+import { ProductBulkBar } from './product-bulk-bar';
 import { VariantBulkBar } from './variant-bulk-bar';
 
 const ALL = '__all__';
@@ -69,6 +70,7 @@ export function ProductsListPage() {
   const [pendingVariantDelete, setPendingVariantDelete] = useState<ProductVariant | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
 
   const categoryName = useMemo(() => {
     const map = new Map((categories ?? []).map((c) => [c.id, c.name]));
@@ -138,6 +140,30 @@ export function ProductsListPage() {
   );
   const selectedIds = [...selected].filter((id) => knownVariantIds.has(id));
 
+  const knownProductIds = useMemo(() => new Set((products ?? []).map((p) => p.id)), [products]);
+  const selectedProductIds = [...selectedProducts].filter((id) => knownProductIds.has(id));
+  const selectedProductVariantCount = selectedProductIds.reduce(
+    (sum, id) => sum + (variantsByProduct.get(id)?.length ?? 0),
+    0,
+  );
+  const shownProductIds = rows.map((r) => r.product.id);
+  const shownSelected = shownProductIds.filter((id) => selectedProducts.has(id)).length;
+  const allProductsState =
+    shownSelected === 0
+      ? false
+      : shownSelected === shownProductIds.length
+        ? true
+        : ('indeterminate' as const);
+  const setProductSelection = (ids: string[], on: boolean) =>
+    setSelectedProducts((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+
   return (
     <div>
       <PageHeader
@@ -183,6 +209,11 @@ export function ProductsListPage() {
         ) : null}
       </div>
 
+      <ProductBulkBar
+        selectedIds={selectedProductIds}
+        variantCount={selectedProductVariantCount}
+        onClear={() => setSelectedProducts(new Set())}
+      />
       <VariantBulkBar selectedIds={selectedIds} onClear={() => setSelected(new Set())} />
 
       {isLoading ? (
@@ -194,7 +225,20 @@ export function ProductsListPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-36" />
+                <TableHead className="w-36">
+                  <RoleGate min="STAFF">
+                    <div className="flex items-center gap-1">
+                      <span className="inline-block h-7 w-7" />
+                      <Checkbox
+                        aria-label="Select all products shown"
+                        checked={allProductsState}
+                        onCheckedChange={(checked) =>
+                          setProductSelection(shownProductIds, checked === true)
+                        }
+                      />
+                    </div>
+                  </RoleGate>
+                </TableHead>
                 <TableHead>SKU</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Category</TableHead>
@@ -211,6 +255,7 @@ export function ProductsListPage() {
               {rows.map(({ product, variants, autoOpen }) => {
                 const isOpen = variants.length > 0 && (autoOpen || expanded.has(product.id));
                 const thumbnail = thumbnails.byProduct.get(product.id);
+                const productSelected = selectedProducts.has(product.id);
                 const variantIds = variants.map((v) => v.id);
                 const selectedCount = variantIds.filter((id) => selected.has(id)).length;
                 const groupState =
@@ -223,7 +268,7 @@ export function ProductsListPage() {
                 return (
                   <Fragment key={product.id}>
                     <TableRow
-                      className="cursor-pointer"
+                      className={cn('cursor-pointer', productSelected && 'bg-primary/5')}
                       onClick={() => navigate(`/products/${product.id}`)}
                     >
                       <TableCell onClick={(e) => e.stopPropagation()}>
@@ -246,17 +291,15 @@ export function ProductsListPage() {
                           ) : (
                             <span className="inline-block h-7 w-7" />
                           )}
-                          {variants.length > 0 ? (
-                            <RoleGate min="STAFF">
-                              <Checkbox
-                                aria-label={`Select all variants of ${product.name}`}
-                                checked={groupState}
-                                onCheckedChange={(checked) =>
-                                  setSelection(variantIds, checked === true)
-                                }
-                              />
-                            </RoleGate>
-                          ) : null}
+                          <RoleGate min="STAFF">
+                            <Checkbox
+                              aria-label={`Select product ${product.name}`}
+                              checked={productSelected}
+                              onCheckedChange={(checked) =>
+                                setProductSelection([product.id], checked === true)
+                              }
+                            />
+                          </RoleGate>
                           <ItemThumbnail image={thumbnail} alt={product.name} className="ml-auto" />
                         </div>
                       </TableCell>
@@ -300,7 +343,17 @@ export function ProductsListPage() {
                           <Table className="text-xs">
                             <TableHeader>
                               <TableRow className="hover:bg-transparent">
-                                <TableHead className="w-36" />
+                                <TableHead className="w-36 pl-10">
+                                  <RoleGate min="STAFF">
+                                    <Checkbox
+                                      aria-label={`Select all variants of ${product.name}`}
+                                      checked={groupState}
+                                      onCheckedChange={(checked) =>
+                                        setSelection(variantIds, checked === true)
+                                      }
+                                    />
+                                  </RoleGate>
+                                </TableHead>
                                 <TableHead>Variant SKU</TableHead>
                                 <TableHead>Size</TableHead>
                                 <TableHead>Color</TableHead>
@@ -418,6 +471,7 @@ export function ProductsListPage() {
           if (!pendingDelete) return;
           try {
             await deleteProduct.mutateAsync(pendingDelete.id);
+            setProductSelection([pendingDelete.id], false);
             setSelected((prev) => {
               const next = new Set(prev);
               for (const v of variantsByProduct.get(pendingDelete.id) ?? []) next.delete(v.id);

@@ -401,6 +401,63 @@ export function useBulkUpdateVariants() {
   });
 }
 
+export interface BulkProductPatch {
+  cost_price?: number;
+  selling_price?: number;
+  tax_rate?: number;
+  hsn_sac_code?: string | null;
+}
+
+/**
+ * Sets the same values on many parent products. With `variantsFollow`, the variants of those
+ * products drop their own value for each changed field (cost/selling price/HSN) so they inherit
+ * the new one; otherwise variants with their own value keep it.
+ */
+export function useBulkUpdateProducts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      ids,
+      patch,
+      variantsFollow,
+    }: {
+      ids: string[];
+      patch: BulkProductPatch;
+      variantsFollow: boolean;
+    }) => {
+      const variantPatch: BulkVariantPatch = {};
+      if (patch.cost_price !== undefined) variantPatch.cost_price = null;
+      if (patch.selling_price !== undefined) variantPatch.selling_price = null;
+      if (patch.hsn_sac_code !== undefined) variantPatch.hsn_sac_code = null;
+
+      let updated = 0;
+      for (let i = 0; i < ids.length; i += BULK_CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + BULK_CHUNK_SIZE);
+        const { data, error } = await supabase
+          .from('products')
+          .update(patch)
+          .in('id', chunk)
+          .select('id');
+        if (error) throw error;
+        updated += data.length;
+        if (variantsFollow && Object.keys(variantPatch).length > 0) {
+          const { error: variantError } = await supabase
+            .from('product_variants')
+            .update(variantPatch)
+            .in('product_id', chunk);
+          if (variantError) throw variantError;
+        }
+      }
+      // RLS hides rows the caller can't update instead of raising, so compare counts.
+      return { updated, requested: ids.length };
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: ['product-variants'] });
+    },
+  });
+}
+
 export function useSetPrimaryBarcode(owner: BarcodeOwner) {
   const queryClient = useQueryClient();
   return useMutation({

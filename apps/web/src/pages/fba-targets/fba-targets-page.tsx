@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Truck } from 'lucide-react';
+import { ChevronDown, ChevronRight, ListPlus, Pencil, Plus, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -23,6 +23,7 @@ import { itemKey } from '@/features/products/item-options';
 import { formatCurrency, formatQuantity } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
+import { FbaBulkAddDialog } from './fba-bulk-add-dialog';
 import { useFbaData } from './fba-data';
 import { FbaTargetDialog } from './fba-target-dialog';
 
@@ -51,6 +52,7 @@ export function FbaTargetsPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<FbaTarget | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<FbaTarget | null>(null);
 
   const rows = useMemo(
@@ -127,6 +129,10 @@ export function FbaTargetsPage() {
         description="Finished SKUs to send to Amazon FBA, the raw materials they need, and what it all costs."
         actions={
           <RoleGate min="STAFF">
+            <Button variant="outline" size="sm" onClick={() => setBulkOpen(true)}>
+              <ListPlus className="h-4 w-4" />
+              Add multiple SKUs
+            </Button>
             <Button size="sm" onClick={() => openDialog(null)}>
               <Plus className="h-4 w-4" />
               Add SKU
@@ -368,6 +374,8 @@ export function FbaTargetsPage() {
           ) : null}
         </div>
       )}
+
+      <FbaBulkAddDialog open={bulkOpen} onOpenChange={setBulkOpen} data={data} />
 
       <FbaTargetDialog
         open={dialogOpen}
