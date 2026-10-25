@@ -755,13 +755,36 @@ export interface Database {
           target_quantity: number;
           pricing_calculation_id: string | null;
           notes: string | null;
+          unit_cost: number | null;
+          unit_price: number | null;
           created_by: string | null;
           created_at: string;
           updated_at: string;
         };
-        // Written through the save_fba_target RPC; direct deletes only.
+        // Created/edited through the save_fba_target RPC; bulk edits update these fields directly.
         Insert: never;
-        Update: never;
+        Update: {
+          target_quantity?: number;
+          pricing_calculation_id?: string | null;
+          unit_cost?: number | null;
+          unit_price?: number | null;
+        };
+        Relationships: [];
+      };
+      fba_category_defaults: {
+        Row: {
+          category_id: string;
+          unit_cost: number | null;
+          unit_price: number | null;
+          updated_by: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          category_id: string;
+          unit_cost?: number | null;
+          unit_price?: number | null;
+        };
+        Update: Partial<Database['public']['Tables']['fba_category_defaults']['Insert']>;
         Relationships: [];
       };
       fba_target_materials: {

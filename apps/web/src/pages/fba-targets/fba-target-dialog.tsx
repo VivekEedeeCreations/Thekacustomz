@@ -61,6 +61,8 @@ export function FbaTargetDialog({
   const [fnsku, setFnsku] = useState('');
   const [calculationId, setCalculationId] = useState(NONE);
   const [notes, setNotes] = useState('');
+  const [unitCost, setUnitCost] = useState('');
+  const [unitPrice, setUnitPrice] = useState('');
   const [lines, setLines] = useState<MaterialLine[]>([]);
 
   useEffect(() => {
@@ -71,6 +73,8 @@ export function FbaTargetDialog({
     setFnsku(target?.fnsku ?? '');
     setCalculationId(target?.pricing_calculation_id ?? NONE);
     setNotes(target?.notes ?? '');
+    setUnitCost(target?.unit_cost != null ? String(target.unit_cost) : '');
+    setUnitPrice(target?.unit_price != null ? String(target.unit_price) : '');
     setLines(linesFromMaterials(targetMaterials));
     // Only reset when the dialog opens, not when background queries refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -100,6 +104,13 @@ export function FbaTargetDialog({
       toast.error('Target quantity must be a whole number, 0 or more');
       return;
     }
+    const money = (text: string) => (text.trim() === '' ? null : Number(text));
+    const cost = money(unitCost);
+    const price = money(unitPrice);
+    if ((cost != null && !(cost >= 0)) || (price != null && !(price >= 0))) {
+      toast.error('Cost and price must be numbers, 0 or more');
+      return;
+    }
     const materials = materialInputs(lines);
     if (typeof materials === 'string') {
       toast.error(materials);
@@ -118,6 +129,8 @@ export function FbaTargetDialog({
           target_quantity: qty,
           pricing_calculation_id: calculationId === NONE ? null : calculationId,
           notes,
+          unit_cost: cost,
+          unit_price: price,
         },
         materials,
       });
@@ -221,6 +234,43 @@ export function FbaTargetDialog({
                 Save a calculation on the Price calculator page to link it here.
               </p>
             ) : null}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor={`${ids.qty}-cost`}>Cost per unit (optional)</Label>
+              <Input
+                id={`${ids.qty}-cost`}
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder={
+                  linked ? `From calculation: ${formatCurrency(linked.unitCost)}` : 'Not set'
+                }
+                value={unitCost}
+                onChange={(e) => setUnitCost(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`${ids.qty}-price`}>Selling price per unit (optional)</Label>
+              <Input
+                id={`${ids.qty}-price`}
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder={
+                  linked?.breakdown
+                    ? `From calculation: ${formatCurrency(linked.breakdown.sellingPrice)}`
+                    : 'Not set'
+                }
+                value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              Filled in here, these win over the linked calculation and the category default. Leave
+              blank to use those.
+            </p>
           </div>
 
           <div className="space-y-2">

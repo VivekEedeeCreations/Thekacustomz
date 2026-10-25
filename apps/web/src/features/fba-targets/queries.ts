@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 
 export type FbaTarget = Tables<'fba_targets'>;
 export type FbaTargetMaterial = Tables<'fba_target_materials'>;
+export type FbaCategoryDefault = Tables<'fba_category_defaults'>;
 
 export function useFbaTargets() {
   return useQuery({
@@ -26,6 +27,18 @@ export function useFbaTargetMaterials() {
     queryKey: ['fba-target-materials'],
     queryFn: async (): Promise<FbaTargetMaterial[]> => {
       const { data, error } = await supabase.from('fba_target_materials').select('*');
+      if (error) throw error;
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useFbaCategoryDefaults() {
+  return useQuery({
+    queryKey: ['fba-category-defaults'],
+    queryFn: async (): Promise<FbaCategoryDefault[]> => {
+      const { data, error } = await supabase.from('fba_category_defaults').select('*');
       if (error) throw error;
       return data;
     },
