@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, ListPlus, Pencil, Plus, Trash2, Truck } from 'lucide-react';
+import { ChevronDown, ChevronRight, ListPlus, Pencil, Plus, Trash2, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/page-header';
 import { RoleGate } from '@/components/auth/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -17,7 +18,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useDeleteFbaTarget } from '@/features/fba-targets/mutations';
+import { useCategories } from '@/features/categories/queries';
+import { useDeleteFbaTargets } from '@/features/fba-targets/mutations';
 import type { FbaTarget } from '@/features/fba-targets/queries';
 import { itemKey } from '@/features/products/item-options';
 import { formatCurrency, formatQuantity } from '@/lib/format';
@@ -48,12 +50,15 @@ function ShortBadge({ short }: { short: number }) {
 
 export function FbaTargetsPage() {
   const data = useFbaData();
-  const deleteTarget = useDeleteFbaTarget();
+  const deleteTargets = useDeleteFbaTargets();
+  const { data: categories } = useCategories();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<FbaTarget | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<FbaTarget | null>(null);
+  /** Targets waiting for "remove?" confirmation — one from a row's bin, or the ticked ones. */
+  const [pendingDelete, setPendingDelete] = useState<FbaTarget[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const rows = useMemo(
     () =>
@@ -110,10 +115,56 @@ export function FbaTargetsPage() {
     { units: 0, cost: 0, unlinked: 0 },
   );
 
+  // Units (and linked cost) per category of the finished product, biggest first.
+  const byCategory = useMemo(() => {
+    const names = new Map((categories ?? []).map((c) => [c.id, c.name]));
+    const map = new Map<
+      string,
+      { name: string; skus: number; units: number; cost: number; unlinked: number }
+    >();
+    for (const r of rows) {
+      const categoryId = r.option?.product.category_id ?? null;
+      const key = categoryId ?? '';
+      const row = map.get(key) ?? {
+        name: (categoryId && names.get(categoryId)) || 'Uncategorized',
+        skus: 0,
+        units: 0,
+        cost: 0,
+        unlinked: 0,
+      };
+      row.skus += 1;
+      row.units += r.target.target_quantity;
+      if (r.linked) row.cost += r.linked.unitCost * r.target.target_quantity;
+      else row.unlinked += 1;
+      map.set(key, row);
+    }
+    return [...map.values()].sort((a, b) => b.units - a.units || a.name.localeCompare(b.name));
+  }, [rows, categories]);
+
   const openDialog = (target: FbaTarget | null) => {
     setEditing(target);
     setDialogOpen(true);
   };
+
+  const targetIds = rows.map((r) => r.target.id);
+  const selectedTargets = rows.filter((r) => selected.has(r.target.id)).map((r) => r.target);
+  const allState =
+    selectedTargets.length === 0
+      ? false
+      : selectedTargets.length === targetIds.length
+        ? true
+        : ('indeterminate' as const);
+  const setSelection = (ids: string[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  const labelOf = (t: FbaTarget) =>
+    data.optionByKey.get(itemKey(t.product_id, t.variant_id))?.label ?? 'this SKU';
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -172,158 +223,259 @@ export function FbaTargetsPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10" />
-                  <TableHead>Finished SKU</TableHead>
-                  <TableHead>Amazon SKU / FNSKU</TableHead>
-                  <TableHead className="text-right">Target qty</TableHead>
-                  <TableHead className="text-right">Cost / unit</TableHead>
-                  <TableHead className="text-right">Total cost</TableHead>
-                  <TableHead>Raw materials</TableHead>
-                  <RoleGate min="STAFF">
-                    <TableHead className="w-20" />
-                  </RoleGate>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map(({ target, option, needs, linked }) => {
-                  const isOpen = expanded.has(target.id);
-                  const shortCount = needs.filter((n) => n.short > 0).length;
-                  return (
-                    <Fragment key={target.id}>
-                      <TableRow className="cursor-pointer" onClick={() => toggle(target.id)}>
-                        <TableCell>
-                          {isOpen ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
+          <div>
+            <h3 className="mb-2 text-sm font-medium">Units needed by category</h3>
+            <div className="rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">SKUs</TableHead>
+                    <TableHead className="text-right">Units</TableHead>
+                    <TableHead className="text-right">Share</TableHead>
+                    <TableHead className="text-right">Cost (linked)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {byCategory.map((c) => (
+                    <TableRow key={c.name}>
+                      <TableCell className="font-medium">{c.name}</TableCell>
+                      <TableCell className="text-right">{c.skus}</TableCell>
+                      <TableCell className="text-right font-medium">
+                        {formatQuantity(c.units)}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {totals.units > 0 ? `${Math.round((c.units / totals.units) * 100)}%` : '—'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatCurrency(c.cost)}
+                        {c.unlinked > 0 ? (
+                          <span className="block text-xs text-muted-foreground">
+                            {c.unlinked} not linked
+                          </span>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {byCategory.length > 1 ? (
+                    <TableRow className="bg-muted/40 font-semibold hover:bg-muted/40">
+                      <TableCell>Total</TableCell>
+                      <TableCell className="text-right">{rows.length}</TableCell>
+                      <TableCell className="text-right">{formatQuantity(totals.units)}</TableCell>
+                      <TableCell className="text-right">100%</TableCell>
+                      <TableCell className="text-right">{formatCurrency(totals.cost)}</TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+
+          <div>
+            {selectedTargets.length > 0 ? (
+              <RoleGate min="STAFF">
+                <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
+                  <span className="text-sm font-medium">
+                    {selectedTargets.length} SKU{selectedTargets.length === 1 ? '' : 's'} selected
+                  </span>
+                  <div className="ml-auto flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive"
+                      onClick={() => setPendingDelete(selectedTargets)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Remove from FBA targets
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                      <X className="h-4 w-4" />
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+              </RoleGate>
+            ) : null}
+            <div className="rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-16">
+                      <RoleGate min="STAFF">
+                        <Checkbox
+                          aria-label="Select all FBA targets"
+                          checked={allState}
+                          onCheckedChange={(checked) => setSelection(targetIds, checked === true)}
+                        />
+                      </RoleGate>
+                    </TableHead>
+                    <TableHead>Finished SKU</TableHead>
+                    <TableHead>Amazon SKU / FNSKU</TableHead>
+                    <TableHead className="text-right">Target qty</TableHead>
+                    <TableHead className="text-right">Cost / unit</TableHead>
+                    <TableHead className="text-right">Total cost</TableHead>
+                    <TableHead>Raw materials</TableHead>
+                    <RoleGate min="STAFF">
+                      <TableHead className="w-20" />
+                    </RoleGate>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map(({ target, option, needs, linked }) => {
+                    const isOpen = expanded.has(target.id);
+                    const shortCount = needs.filter((n) => n.short > 0).length;
+                    return (
+                      <Fragment key={target.id}>
+                        <TableRow
+                          className={cn(
+                            'cursor-pointer',
+                            selected.has(target.id) && 'bg-primary/5',
                           )}
-                        </TableCell>
-                        <TableCell className="font-medium">
-                          {option?.label ?? 'Unknown product'}
-                          {target.notes ? (
-                            <p className="text-xs font-normal text-muted-foreground">
-                              {target.notes}
-                            </p>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {target.amazon_sku || '—'}
-                          {target.fnsku ? (
-                            <span className="block text-muted-foreground">{target.fnsku}</span>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatQuantity(target.target_quantity)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {linked ? (
-                            <>
-                              {formatCurrency(linked.unitCost)}
-                              <span className="block text-xs text-muted-foreground">
-                                {linked.calc.title}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">Not linked</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {linked ? formatCurrency(linked.unitCost * target.target_quantity) : '—'}
-                        </TableCell>
-                        <TableCell>
-                          {needs.length === 0 ? (
-                            <span className="text-xs text-muted-foreground">None added</span>
-                          ) : shortCount > 0 ? (
-                            <Badge variant="destructive">
-                              {shortCount} of {needs.length} short
-                            </Badge>
-                          ) : (
-                            <Badge variant="success">All {needs.length} in stock</Badge>
-                          )}
-                        </TableCell>
-                        <RoleGate min="STAFF">
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            <div className="flex">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label="Edit"
-                                onClick={() => openDialog(target)}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <RoleGate min="ADMIN">
+                          onClick={() => toggle(target.id)}
+                        >
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <RoleGate min="STAFF">
+                                <span onClick={(e) => e.stopPropagation()} className="flex">
+                                  <Checkbox
+                                    aria-label={`Select ${option?.label ?? 'target'}`}
+                                    checked={selected.has(target.id)}
+                                    onCheckedChange={(checked) =>
+                                      setSelection([target.id], checked === true)
+                                    }
+                                  />
+                                </span>
+                              </RoleGate>
+                              {isOpen ? (
+                                <ChevronDown className="h-4 w-4" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4" />
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {option?.label ?? 'Unknown product'}
+                            {target.notes ? (
+                              <p className="text-xs font-normal text-muted-foreground">
+                                {target.notes}
+                              </p>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {target.amazon_sku || '—'}
+                            {target.fnsku ? (
+                              <span className="block text-muted-foreground">{target.fnsku}</span>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatQuantity(target.target_quantity)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {linked ? (
+                              <>
+                                {formatCurrency(linked.unitCost)}
+                                <span className="block text-xs text-muted-foreground">
+                                  {linked.calc.title}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Not linked</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right font-medium">
+                            {linked
+                              ? formatCurrency(linked.unitCost * target.target_quantity)
+                              : '—'}
+                          </TableCell>
+                          <TableCell>
+                            {needs.length === 0 ? (
+                              <span className="text-xs text-muted-foreground">None added</span>
+                            ) : shortCount > 0 ? (
+                              <Badge variant="destructive">
+                                {shortCount} of {needs.length} short
+                              </Badge>
+                            ) : (
+                              <Badge variant="success">All {needs.length} in stock</Badge>
+                            )}
+                          </TableCell>
+                          <RoleGate min="STAFF">
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <div className="flex">
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  aria-label="Delete"
-                                  onClick={() => setPendingDelete(target)}
+                                  aria-label="Edit"
+                                  onClick={() => openDialog(target)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`Remove ${option?.label ?? 'SKU'} from FBA targets`}
+                                  onClick={() => setPendingDelete([target])}
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
-                              </RoleGate>
-                            </div>
-                          </TableCell>
-                        </RoleGate>
-                      </TableRow>
-
-                      {isOpen ? (
-                        <TableRow className="bg-muted/30 hover:bg-muted/30">
-                          <TableCell colSpan={8} className="p-0">
-                            {needs.length === 0 ? (
-                              <p className="px-12 py-3 text-xs text-muted-foreground">
-                                No raw materials yet — edit this target to add them.
-                              </p>
-                            ) : (
-                              <Table className="text-xs">
-                                <TableHeader>
-                                  <TableRow className="hover:bg-transparent">
-                                    <TableHead className="pl-12">Raw material</TableHead>
-                                    <TableHead className="text-right">Per unit</TableHead>
-                                    <TableHead className="text-right">
-                                      Needed (× {formatQuantity(target.target_quantity)})
-                                    </TableHead>
-                                    <TableHead className="text-right">In stock</TableHead>
-                                    <TableHead className="text-right">Material cost</TableHead>
-                                    <TableHead>Status</TableHead>
-                                  </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                  {needs.map((n) => (
-                                    <TableRow key={n.key} className="hover:bg-transparent">
-                                      <TableCell className="pl-12">{n.label}</TableCell>
-                                      <TableCell className="text-right">
-                                        {formatQuantity(n.perUnit)}
-                                      </TableCell>
-                                      <TableCell className="text-right font-medium">
-                                        {formatQuantity(n.needed)}
-                                      </TableCell>
-                                      <TableCell className="text-right">
-                                        {formatQuantity(n.inStock)}
-                                      </TableCell>
-                                      <TableCell className="text-right">
-                                        {formatCurrency(n.cost)}
-                                      </TableCell>
-                                      <TableCell>
-                                        <ShortBadge short={n.short} />
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
-                                </TableBody>
-                              </Table>
-                            )}
-                          </TableCell>
+                              </div>
+                            </TableCell>
+                          </RoleGate>
                         </TableRow>
-                      ) : null}
-                    </Fragment>
-                  );
-                })}
-              </TableBody>
-            </Table>
+
+                        {isOpen ? (
+                          <TableRow className="bg-muted/30 hover:bg-muted/30">
+                            <TableCell colSpan={8} className="p-0">
+                              {needs.length === 0 ? (
+                                <p className="px-12 py-3 text-xs text-muted-foreground">
+                                  No raw materials yet — edit this target to add them.
+                                </p>
+                              ) : (
+                                <Table className="text-xs">
+                                  <TableHeader>
+                                    <TableRow className="hover:bg-transparent">
+                                      <TableHead className="pl-12">Raw material</TableHead>
+                                      <TableHead className="text-right">Per unit</TableHead>
+                                      <TableHead className="text-right">
+                                        Needed (× {formatQuantity(target.target_quantity)})
+                                      </TableHead>
+                                      <TableHead className="text-right">In stock</TableHead>
+                                      <TableHead className="text-right">Material cost</TableHead>
+                                      <TableHead>Status</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {needs.map((n) => (
+                                      <TableRow key={n.key} className="hover:bg-transparent">
+                                        <TableCell className="pl-12">{n.label}</TableCell>
+                                        <TableCell className="text-right">
+                                          {formatQuantity(n.perUnit)}
+                                        </TableCell>
+                                        <TableCell className="text-right font-medium">
+                                          {formatQuantity(n.needed)}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          {formatQuantity(n.inStock)}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          {formatCurrency(n.cost)}
+                                        </TableCell>
+                                        <TableCell>
+                                          <ShortBadge short={n.short} />
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           </div>
 
           {summary.length > 0 ? (
@@ -388,16 +540,26 @@ export function FbaTargetsPage() {
       <ConfirmDialog
         open={!!pendingDelete}
         onOpenChange={(open) => !open && setPendingDelete(null)}
-        title="Delete FBA target?"
-        description="The target and its raw-material list will be removed. Stock is not affected."
-        confirmLabel="Delete"
+        title={
+          pendingDelete && pendingDelete.length > 1
+            ? `Remove ${pendingDelete.length} SKUs from FBA targets?`
+            : 'Remove this SKU from FBA targets?'
+        }
+        description={
+          pendingDelete && pendingDelete.length === 1
+            ? `"${labelOf(pendingDelete[0]!)}" and its raw-material list will be taken off the FBA list. The product itself, its stock and orders are not affected.`
+            : 'Their raw-material lists go too. The products themselves, their stock and orders are not affected.'
+        }
+        confirmLabel="Remove"
         onConfirm={async () => {
           if (!pendingDelete) return;
+          const ids = pendingDelete.map((t) => t.id);
           try {
-            await deleteTarget.mutateAsync(pendingDelete.id);
-            toast.success('FBA target deleted');
+            const count = await deleteTargets.mutateAsync(ids);
+            setSelection(ids, false);
+            toast.success(`Removed ${count} SKU${count === 1 ? '' : 's'} from FBA targets`);
           } catch (error) {
-            toast.error('Could not delete FBA target', { description: (error as Error).message });
+            toast.error('Could not remove', { description: (error as Error).message });
           }
         }}
       />

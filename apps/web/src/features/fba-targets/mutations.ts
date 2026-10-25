@@ -46,13 +46,26 @@ export function useSaveFbaTarget() {
   });
 }
 
-export function useDeleteFbaTarget() {
+/**
+ * Removes FBA targets (one or many) with their raw-material lists. Planning data only — stock and
+ * orders are untouched. Resolves to how many were removed.
+ */
+export function useDeleteFbaTargets() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const { data, error } = await supabase.from('fba_targets').delete().eq('id', id).select('id');
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return 0;
+      const { data, error } = await supabase
+        .from('fba_targets')
+        .delete()
+        .in('id', ids)
+        .select('id');
       if (error) throw error;
-      if (!data || data.length === 0) throw new Error('Only an admin can delete an FBA target.');
+      // RLS hides rows the caller may not delete instead of raising.
+      if (!data || data.length === 0) {
+        throw new Error("You don't have permission to remove FBA targets.");
+      }
+      return data.length;
     },
     onSuccess: () => invalidate(queryClient),
   });

@@ -99,6 +99,71 @@ function CostRow({
   );
 }
 
+/**
+ * Every cost added up. Percentage costs depend on the selling price, so they're shown in ₹ once a
+ * selling price is entered on the right, and as "+ x% of the selling price" until then.
+ */
+function CostSummary({
+  rawCost,
+  costs,
+  sellingPrice,
+}: {
+  rawCost: number;
+  costs: CostLine[];
+  sellingPrice: number | null;
+}) {
+  const fixed = costs.filter((c) => c.type === 'FIXED' && c.amount > 0);
+  const percent = costs.filter((c) => c.type === 'PERCENT_OF_PRICE' && c.amount > 0);
+  const fixedTotal = rawCost + fixed.reduce((sum, c) => sum + c.amount, 0);
+  const percentTotal = percent.reduce((sum, c) => sum + c.amount, 0);
+  const percentRupees = sellingPrice != null ? (percentTotal / 100) * sellingPrice : null;
+
+  return (
+    <div className="space-y-1 rounded-md bg-muted/50 p-3 text-sm">
+      <div className="flex justify-between">
+        <span className="text-muted-foreground">Raw material</span>
+        <span>{formatCurrency(rawCost)}</span>
+      </div>
+      {fixed.map((c) => (
+        <div key={c.id} className="flex justify-between">
+          <span className="truncate text-muted-foreground">{c.label || 'Unnamed cost'}</span>
+          <span>{formatCurrency(c.amount)}</span>
+        </div>
+      ))}
+      {percent.map((c) => (
+        <div key={c.id} className="flex justify-between">
+          <span className="truncate text-muted-foreground">
+            {c.label || 'Unnamed cost'} ({c.amount}%)
+          </span>
+          <span>
+            {sellingPrice != null
+              ? formatCurrency((c.amount / 100) * sellingPrice)
+              : `${c.amount}%`}
+          </span>
+        </div>
+      ))}
+      <div className="flex items-baseline justify-between border-t pt-1.5">
+        <span className="font-medium">Total cost per unit</span>
+        <span className="text-right font-semibold">
+          {percentRupees != null
+            ? formatCurrency(fixedTotal + percentRupees)
+            : formatCurrency(fixedTotal)}
+          {percentTotal > 0 && percentRupees == null ? (
+            <span className="block text-xs font-normal text-muted-foreground">
+              + {percentTotal}% of the selling price
+            </span>
+          ) : null}
+        </span>
+      </div>
+      {percentTotal > 0 && percentRupees != null ? (
+        <p className="text-xs text-muted-foreground">
+          Percentage costs worked out at the selling price of {formatCurrency(sellingPrice)}.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function BreakdownList({
   breakdown,
   gstRatePercent,
@@ -133,6 +198,10 @@ function BreakdownList({
           <span>− {formatCurrency(breakdown.percentCostTotal)}</span>
         </div>
       ) : null}
+      <div className="flex justify-between">
+        <span className="text-muted-foreground">Total cost</span>
+        <span className="font-medium">{formatCurrency(breakdown.totalCost)}</span>
+      </div>
       <div className="flex items-center justify-between border-t pt-2">
         <span className="font-medium">{loss ? 'Loss' : 'Profit'}</span>
         <span
@@ -309,6 +378,12 @@ export function PricingCalculatorPage() {
                 commission, payment gateway fees. Fixed costs are a flat ₹ amount; percentage costs
                 (like a marketplace&apos;s commission) are computed on the selling price below.
               </p>
+
+              <CostSummary
+                rawCost={inputs.rawCost}
+                costs={costs}
+                sellingPrice={fromPrice ? sellingPrice : null}
+              />
 
               <div>
                 <Label>GST rate</Label>
